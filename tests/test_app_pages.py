@@ -212,6 +212,32 @@ def test_compare_page_datasets_tab_shows_a_real_diff(monkeypatch):
     assert schema_row["Value (prod)"] == "Loyalty Events"
 
 
+def test_compare_page_datasets_tab_shows_schema_field_level_differences(monkeypatch):
+    """Regression: reported live — the "Schema" row only said the binding
+    *changed* (by name/id), never what was actually different about the
+    two schemas' fields, which is the "actual difference" a user actually
+    wants to see. This pins that the embedded field-level diff (reusing
+    fetch_schema_diff()/_render_diff(), the same engine the Schemas tab
+    itself uses) renders real, non-zero metrics for the default dataset
+    selection (Loyalty Events), whose schema genuinely differs prod-vs-dev
+    in mock data (mock_schema_fields_for_sandbox in clients/mock.py)."""
+    from aep_monitor.config import settings
+    monkeypatch.setattr(settings, "adobe_sandboxes", "prod,dev")
+
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.radio(key="navigation").set_value("Compare").run()
+
+    assert at.exception == []
+    markdown_text = " ".join(m.value for m in at.markdown)
+    assert "Schema field differences" in markdown_text
+
+    def any_nonzero(label: str) -> bool:
+        return any(m.value not in (None, "0") for m in at.metric if m.label == label)
+
+    assert any_nonzero("Only in Loyalty Events (dev)")  # dev has a field prod doesn't, per mock data
+
+
 def test_compare_page_datasets_tab_flags_a_description_difference(monkeypatch):
     """Regression: reported live as "not showing the actual differences" —
     description was shown on the Datasets page but silently excluded from

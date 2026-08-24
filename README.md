@@ -68,16 +68,22 @@ three are actually about sandboxes:
 |---|---|---|
 | **Sandboxes** | AEP flow health + Observability metrics across every sandbox in `ADOBE_SANDBOXES` | Yes |
 | **Schemas** | Any schema in sandbox A vs. any schema in sandbox B — each side picked independently | Yes |
-| **Datasets** | Any dataset in sandbox A vs. any dataset in sandbox B — same independent-per-side pattern as Schemas; compares name, description, schema binding, Profile/Identity enablement | Yes |
+| **Datasets** | Any dataset in sandbox A vs. any dataset in sandbox B — same independent-per-side pattern as Schemas; compares name, description, schema binding, Profile/Identity enablement, plus the two datasets' *schemas'* own field-level diff | Yes |
 | **DC Properties** | Two picked properties' extensions/rules/libraries/environments/data elements | No — DC is org-wide |
 | **CJA Data Views** | Two picked data views' dimensions/metrics | No — CJA is org-wide |
 
-The Datasets tab renders differently from the other four: a dataset is a
-single flat object (name, schema binding, two booleans), not a list of
-named sub-items, so there's no natural "only in A / only in B" bucket the
-way there is for a property's extensions or a schema's fields — it's a
-plain field-by-field "changed / not changed" table instead of the
-metrics-plus-buckets layout every other tab uses.
+The Datasets tab's own attribute table renders differently from the other
+four: a dataset is a single flat object (name, description, schema
+binding, two booleans), not a list of named sub-items, so there's no
+natural "only in A / only in B" bucket the way there is for a property's
+extensions or a schema's fields — it's a plain field-by-field
+"changed / not changed" table instead of the metrics-plus-buckets layout
+every other tab uses. That table's "Schema" row only says the binding
+*changed* (by name/id), not what's actually different about the two
+schemas — so directly underneath it, the tab also renders a full
+field-level diff of the two datasets' bound schemas (reusing the Schemas
+tab's own `fetch_schema_diff()`/buckets layout), so "the schema changed"
+comes with what specifically changed, not just that it did.
 
 The Schemas tab picks sandbox and schema independently on each side —
 side B defaults to the same schema *title* as side A when that title

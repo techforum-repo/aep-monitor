@@ -438,6 +438,35 @@ def _render_datasets_tab() -> None:
     ])
     st.dataframe(table, use_container_width=True, hide_index=True)
 
+    # The row above only says the schema *binding* differs (by name/id) —
+    # it doesn't say what's actually different about the two schemas'
+    # fields. Reported live as "not showing field differences": a dataset
+    # comparison that stops at "Schema: changed" without drilling into the
+    # actual field-level diff leaves the real content of that change
+    # invisible. Reuses fetch_schema_diff()/_render_diff() — the exact
+    # same engine the Schemas tab uses — rather than inventing a second one.
+    schema_row = next((r for r in rows if r["field"] == "schema_id"), None)
+    schema_id_a, schema_id_b = (schema_row["value_a"], schema_row["value_b"]) if schema_row else (None, None)
+    if schema_id_a and schema_id_b:
+        st.markdown("**Schema field differences**")
+        schema_diff_cache = st.session_state.setdefault("compare_dataset_schema_diff_cache", {})
+        schema_diff_key = f"{sandbox_a}::{schema_id_a}::{sandbox_b}::{schema_id_b}"
+        if schema_diff_key not in schema_diff_cache:
+            with st.spinner("Comparing schema fields..."):
+                try:
+                    schema_diff_cache[schema_diff_key] = {"result": data.fetch_schema_diff(schema_id_a, sandbox_a, schema_id_b, sandbox_b), "error": None}
+                except Exception as exc:
+                    schema_diff_cache[schema_diff_key] = {"result": None, "error": exc}
+        schema_diff_entry = schema_diff_cache[schema_diff_key]
+        if schema_diff_entry["error"] is not None:
+            render_friendly_error(schema_diff_entry["error"], key="compare_dataset_schema_diff_retry", context="Comparing the datasets' schema fields")
+        else:
+            label_a = schema_titles_a.get(schema_id_a, schema_id_a.rsplit("/", 1)[-1])
+            label_b = schema_titles_b.get(schema_id_b, schema_id_b.rsplit("/", 1)[-1])
+            _render_diff(schema_diff_entry["result"]["diff"], f"{label_a} ({sandbox_a})", f"{label_b} ({sandbox_b})", [("type", "Type"), ("title", "Title"), ("description", "Description")])
+    elif schema_id_a or schema_id_b:
+        st.caption("One of the two datasets has no schema binding — nothing to compare at the field level.")
+
 
 # --- Data Collection properties -----------------------------------------------------
 
