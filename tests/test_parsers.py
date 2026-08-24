@@ -1,0 +1,473 @@
+from __future__ import annotations
+
+"""parse_*() functions across all four API clients — defensive parsing of
+raw (possibly incomplete or oddly-shaped) API responses into the consistent
+row shapes the UI/database/alerts layers depend on. Every field-name
+fallback here exists because a real Adobe response was observed (or
+documented) to vary; these tests pin that behavior down."""
+
+from aep_monitor.clients import aep, audit, catalog, cja, observability, quota, reactor, schema_registry
+
+
+# --- AEP Flow Service ---------------------------------------------------------
+
+def test_parse_flow_falls_back_to_id_when_name_missing():
+    flow = aep.parse_flow({"id": "flow-1", "state": "enabled"})
+    assert flow["flow_name"] == "flow-1"
+    assert flow["flow_id"] == "flow-1"
+
+
+def test_parse_run_extracts_status_records_and_falls_back_on_missing_summaries():
+    run = aep.parse_run({
+        "id": "run-1", "flowId": "flow-1",
+        "metrics": {
+            "recordSummary": {"inputCount": 100, "outputCount": 90, "failedCount": 10},
+            "statusSummary": {"status": "success"},
+        },
+    })
+    assert run["status"] == "success"
+    assert run["records_in"] == 100
+    assert run["records_failed"] == 10
+
+
+def test_parse_run_defaults_failed_count_to_zero_and_status_to_unknown():
+    run = aep.parse_run({"id": "run-1", "flowId": "flow-1"})
+    assert run["records_failed"] == 0
+    assert run["status"] == "unknown"
+
+
+def test_parse_run_does_not_crash_when_assumed_nested_fields_are_plain_strings():
+    """Regression: several fields here (metrics, state, statistics,
+    recordSummary.input/output) were assumed to be nested objects and
+    accessed with `.get()` chains that crash with AttributeError the
+    moment a real API response puts a plain string there instead — exactly
+    the class of bug that hit Observability Insights in production (see
+    test_parse_metrics_response_handles_a_plain_string_metric_field)."""
+    run = aep.parse_run({
+        "id": "run-1", "flowId": "flow-1",
+        "metrics": "not-an-object",
+        "state": "not-an-object",
+    })
+    assert run["status"] == "unknown"
+    assert run["records_failed"] == 0
+
+
+def test_parse_flow_does_not_crash_when_flowspec_is_a_plain_string():
+    flow = aep.parse_flow({"id": "flow-1", "flowSpec": "not-an-object"})
+    assert flow["state"] == ""
+
+
+# --- Reactor (Data Collection) ------------------------------------------------
+
+def test_parse_extension_flags_rejected_and_failed_as_issues_but_not_pending():
+    rejected = reactor.parse_extension({"id": "e1", "attributes": {"review_status": "rejected"}})
+    approved = reactor.parse_extension({"id": "e2", "attributes": {"review_status": "approved"}})
+    assert rejected["has_issue"] is True
+    assert approved["has_issue"] is False
+
+
+def test_parse_library_flags_failed_and_rejected_states_as_bad():
+    failed = reactor.parse_library({"id": "l1", "attributes": {"name": "Staging", "state": "failed"}})
+    published = reactor.parse_library({"id": "l2", "attributes": {"name": "Prod", "state": "published"}})
+    assert failed["is_bad"] is True
+    assert published["is_bad"] is False
+    assert published["is_good"] is True
+
+
+def test_reactor_parsers_do_not_crash_when_attributes_is_missing_or_not_an_object():
+    assert reactor.parse_property({"id": "p1"})["property_name"] == "p1"
+    assert reactor.parse_extension({"id": "e1", "attributes": None})["has_issue"] is False
+    assert reactor.parse_rule({"id": "r1", "attributes": "not-an-object"})["name"] == "r1"
+    assert reactor.parse_library({"id": "l1", "attributes": 42})["state"] == ""
+    assert reactor.parse_environment({"id": "en1", "attributes": None})["is_bad"] is False
+    assert reactor.parse_data_element({"id": "de1", "attributes": "not-an-object"})["has_issue"] is False
+
+
+def test_parse_environment_flags_failed_status_as_bad():
+    failed = reactor.parse_environment({"id": "en1", "attributes": {"name": "Production", "stage": "production", "status": "failed"}})
+    succeeded = reactor.parse_environment({"id": "en2", "attributes": {"name": "Production", "stage": "production", "status": "succeeded"}})
+    assert failed["is_bad"] is True
+    assert failed["stage"] == "production"
+    assert succeeded["is_bad"] is False
+    assert succeeded["is_good"] is True
+
+
+def test_parse_data_element_flags_dirty_as_an_issue():
+    dirty = reactor.parse_data_element({"id": "de1", "attributes": {"name": "Consent", "dirty": True, "published": False, "review_status": "unsubmitted"}})
+    clean = reactor.parse_data_element({"id": "de2", "attributes": {"name": "Version", "dirty": False, "published": True, "review_status": "approved"}})
+    assert dirty["has_issue"] is True
+    assert clean["has_issue"] is False
+
+
+def test_parse_data_element_flags_rejected_review_status_as_an_issue_even_when_not_dirty():
+    rejected = reactor.parse_data_element({"id": "de1", "attributes": {"name": "X", "dirty": False, "published": False, "review_status": "rejected"}})
+    assert rejected["has_issue"] is True
+
+
+def test_parse_audit_event_extracts_reactors_confirmed_field_names():
+    event = reactor.parse_audit_event({"id": "ae1", "attributes": {
+        "attributed_to_email": "jordan.lee@acme.com", "type_of": "extension.updated",
+        "created_at": "2026-08-24T00:00:00Z", "display_name": "Custom Consent Extension",
+    }})
+    assert event["actor"] == "jordan.lee@acme.com"
+    assert event["action"] == "extension.updated"
+    assert event["target"] == "Custom Consent Extension"
+
+
+# --- CJA -----------------------------------------------------------------------
+
+def test_parse_connection_flags_deleted_and_disabled_as_issues():
+    """Adobe's connections API has no status enum ("status"/"serviceStatus"
+    don't exist — confirmed via docs); isDeleted/isDisabled are the only
+    real health signals, and this is what parse_connection() derives
+    `status`/`has_issue` from instead."""
+    deleted = cja.parse_connection({"id": "c1", "name": "x", "isDeleted": True, "isDisabled": False})
+    assert deleted["has_issue"] is True
+    assert deleted["status"] == "deleted"
+
+    disabled = cja.parse_connection({"id": "c2", "name": "x", "isDeleted": False, "isDisabled": True})
+    assert disabled["has_issue"] is True
+    assert disabled["status"] == "disabled"
+
+    healthy = cja.parse_connection({"id": "c3", "name": "x", "isDeleted": False, "isDisabled": False})
+    assert healthy["has_issue"] is False
+    assert healthy["status"] == "active"
+
+
+def test_parse_connection_falls_back_to_id_when_name_is_absent():
+    """Regression: /connections omits `name` entirely unless requested via
+    the `expansion` query param — confirmed via Adobe's docs. This is the
+    fallback for a genuinely nameless item, not the common case (see
+    clients/cja.py's list_connections(), which always requests it now)."""
+    row = cja.parse_connection({"id": "c1"})
+    assert row["name"] == "c1"
+
+
+def test_parse_dataview_does_not_crash_when_owner_is_a_plain_string():
+    row = cja.parse_dataview({"id": "d1", "name": "x", "owner": "not-an-object"})
+    assert row["owner"] == ""
+
+
+def test_parse_dataview_resolves_connection_id_from_parent_data_group_id():
+    """Regression: the FK back to the parent connection is
+    `parentDataGroupId` (confirmed via Adobe's docs), not `connectionId`/
+    `dataConnectionId` as originally guessed — that guess meant the Data
+    views table's "Connection" column could never resolve to a name even
+    once `name` itself was fixed."""
+    row = cja.parse_dataview({"id": "d1", "name": "x", "parentDataGroupId": "dg_abc123"})
+    assert row["connection_id"] == "dg_abc123"
+
+
+def test_parse_dimension_extracts_source_field_and_approval():
+    row = cja.parse_dimension({
+        "id": "variables/page", "name": "Page", "description": "Page name",
+        "type": "string", "sourceFieldName": "web.webPageDetails.name", "approved": True,
+    })
+    assert row["name"] == "Page"
+    assert row["source_field"] == "web.webPageDetails.name"
+    assert row["approved"] is True
+
+
+def test_parse_metric_falls_back_to_id_when_name_missing():
+    row = cja.parse_metric({"id": "metrics/visits", "type": "int"})
+    assert row["name"] == "metrics/visits"
+    assert row["approved"] is False
+
+
+def test_parse_calculated_metric_extracts_data_id_as_dataview_id():
+    row = cja.parse_calculated_metric({
+        "id": "cm1", "name": "Conversion Rate", "description": "Orders / Visits",
+        "type": "percent", "polarity": "positive", "dataId": "dv-exec",
+        "owner": {"ownerId": 12345},
+    })
+    assert row["dataview_id"] == "dv-exec"
+    assert row["polarity"] == "positive"
+    assert row["owner"] == "12345"
+
+
+def test_parse_calculated_metric_does_not_crash_when_owner_is_not_an_object():
+    row = cja.parse_calculated_metric({"id": "cm1", "owner": "not-an-object"})
+    assert row["owner"] == ""
+
+
+def test_parse_audit_log_extracts_user_and_component_sub_objects():
+    row = cja.parse_audit_log({
+        "id": "al1", "dateCreated": "2026-08-24T00:00:00Z", "action": "EDIT",
+        "description": "Updated calculated metric: Conversion Rate",
+        "user": {"id": "jordan.lee@acme.com", "email": "jordan.lee@acme.com"},
+        "component": {"id": "cm1", "idType": "CALCULATED_METRIC", "name": "Conversion Rate"},
+    })
+    assert row["actor"] == "jordan.lee@acme.com"
+    assert row["target"] == "Conversion Rate"
+    assert row["action"] == "EDIT"
+
+
+def test_parse_audit_log_does_not_crash_when_user_or_component_missing():
+    row = cja.parse_audit_log({"id": "al1", "action": "CREATE"})
+    assert row["actor"] == ""
+    assert row["target"] == ""
+
+
+# --- Quota -----------------------------------------------------------------------
+
+def test_parse_quota_computes_percentage_used():
+    row = quota.parse_quota({"name": "datasetExpirationQuota", "consumed": 42, "quota": 500})
+    assert row["pct_used"] == 8.4
+
+
+def test_parse_quota_is_high_uses_the_configured_threshold(monkeypatch):
+    from aep_monitor.clients import quota as quota_module
+    monkeypatch.setattr(quota_module.settings, "alert_quota_threshold_pct", 80.0)
+    just_under = quota.parse_quota({"name": "x", "consumed": 79, "quota": 100})
+    at_threshold = quota.parse_quota({"name": "x", "consumed": 80, "quota": 100})
+    assert just_under["is_high"] is False
+    assert at_threshold["is_high"] is True
+
+
+def test_parse_quota_handles_a_zero_quota_without_dividing_by_zero():
+    row = quota.parse_quota({"name": "x", "consumed": 0, "quota": 0})
+    assert row["pct_used"] == 0.0
+    assert row["is_high"] is False
+
+
+# --- Observability Insights ----------------------------------------------------
+
+def test_parse_metrics_response_sorts_datapoints_ascending_by_timestamp():
+    raw = {"metricResponses": [{"name": "m1", "datapoints": [
+        {"timestamp": "2026-08-20T00:00:00.000Z", "value": 30},
+        {"timestamp": "2026-08-18T00:00:00.000Z", "value": 10},
+        {"timestamp": "2026-08-19T00:00:00.000Z", "value": 20},
+    ]}]}
+    points = observability.parse_metrics_response(raw)["m1"]
+    assert [p["value"] for p in points] == [10, 20, 30]
+    assert points[-1]["value"] == 30  # "latest value" callers depend on this
+
+
+def test_parse_metrics_response_puts_missing_timestamps_first_without_raising():
+    raw = {"metricResponses": [{"name": "m1", "datapoints": [
+        {"timestamp": "2026-08-19T00:00:00.000Z", "value": 20},
+        {"timestamp": None, "value": -1},
+    ]}]}
+    points = observability.parse_metrics_response(raw)["m1"]
+    assert points[0]["value"] == -1
+    assert points[-1]["value"] == 20
+
+
+def test_parse_metrics_response_handles_an_empty_or_malformed_envelope():
+    assert observability.parse_metrics_response({}) == {}
+    assert observability.parse_metrics_response({"metricResponses": "not-a-list"}) == {}
+
+
+def test_parse_metrics_response_handles_a_plain_string_metric_field():
+    """The exact live bug: a real Observability Insights response put the
+    metric name directly as a string under entry["metric"], where the
+    parser had assumed a nested {"name": ...} object
+    (`entry.get("metric").get("name")`) — crashing with `'str' object has
+    no attribute 'get'` in production. The string value must still be
+    usable as the metric name, not just silently dropped."""
+    raw = {"metricResponses": [{"metric": "timeseries.ingestion.dataset.recordsuccess.count", "datapoints": []}]}
+    result = observability.parse_metrics_response(raw)
+    assert "timeseries.ingestion.dataset.recordsuccess.count" in result
+
+
+def test_parse_metrics_response_ignores_non_dict_entries_and_the_top_level_response():
+    assert observability.parse_metrics_response("a plain string") == {}
+    assert observability.parse_metrics_response({"metricResponses": ["not-a-dict", None]}) == {}
+
+
+# --- Audit -----------------------------------------------------------------------
+
+def test_parse_event_uses_adobes_confirmed_real_field_names():
+    """Regression: reported live as 'Audit Log not displaying despite the
+    permission being granted' — the real cause was two bugs, this one
+    being that the confirmed real field names (assetName, userEmail) are
+    different from what was originally guessed (target, actor)."""
+    event = audit.parse_event({
+        "id": "ae1", "action": "schema.updated", "userEmail": "jordan.lee@acme.com",
+        "timestamp": "2026-08-24T00:00:00Z", "assetName": "XDM Individual Profile",
+    })
+    assert event["actor"] == "jordan.lee@acme.com"
+    assert event["target"] == "XDM Individual Profile"
+
+
+def test_parse_event_falls_back_across_known_field_name_variants():
+    event = audit.parse_event({"eventId": "e1", "actionType": "schema.updated", "userEmail": "a@b.com"})
+    assert event["event_id"] == "e1"
+    assert event["action"] == "schema.updated"
+    assert event["actor"] == "a@b.com"
+
+
+def test_parse_event_does_not_crash_when_user_is_a_plain_string():
+    event = audit.parse_event({"eventId": "e1", "user": "not-an-object"})
+    assert event["actor"] == ""
+
+
+def test_extract_events_reads_the_real_hal_style_embedded_envelope():
+    """Regression: the second half of the live 'no events displayed, no
+    error' report — events sit under _embedded.events (HAL-style), not a
+    top-level events/data/items key as originally guessed. With the old
+    guess, a real response parsed to an empty list silently: no
+    exception, nothing for friendly_error() to catch, the page just said
+    'No audit events returned' as if there genuinely were none."""
+    raw = {"_embedded": {"events": [{"id": "e1"}, {"id": "e2"}]}, "page": {"size": 2}}
+    events = audit._extract_events(raw)
+    assert [e["id"] for e in events] == ["e1", "e2"]
+
+
+def test_extract_events_falls_back_to_originally_guessed_top_level_keys():
+    assert [e["id"] for e in audit._extract_events({"events": [{"id": "e1"}]})] == ["e1"]
+    assert [e["id"] for e in audit._extract_events({"data": [{"id": "e1"}]})] == ["e1"]
+
+
+def test_extract_events_handles_malformed_input_without_raising():
+    assert audit._extract_events("not-a-dict") == []
+    assert audit._extract_events({}) == []
+    assert audit._extract_events({"_embedded": {"events": "not-a-list"}}) == []
+
+
+# --- Catalog (AEP datasets) -------------------------------------------------------
+
+def test_parse_dataset_takes_id_and_item_as_separate_arguments():
+    # Confirmed real shape: Catalog's list response is keyed by dataset id
+    # (an object, not an array) — the id only exists as the dict key, never
+    # inside the value itself. parse_dataset() reflects that by taking both
+    # explicitly rather than assuming a self-contained "id" field like every
+    # other parser in this codebase.
+    row = catalog.parse_dataset("5f1a2b3c", {"name": "Loyalty Events", "description": "x"})
+    assert row["dataset_id"] == "5f1a2b3c"
+    assert row["name"] == "Loyalty Events"
+
+
+def test_parse_dataset_reads_enabled_true_out_of_the_tag_string_list():
+    # Confirmed real shape: tags.unifiedProfile is a list of strings like
+    # ["enabled:true"], not a boolean — a naive bool(tags.get("unifiedProfile"))
+    # would incorrectly read True for ANY non-empty list, including
+    # ["enabled:false"].
+    row = catalog.parse_dataset("id1", {"tags": {"unifiedProfile": ["enabled:true"], "unifiedIdentity": ["enabled:false"]}})
+    assert row["profile_enabled"] is True
+    assert row["identity_enabled"] is False
+
+
+def test_parse_dataset_defaults_enablement_to_false_when_tags_are_absent():
+    row = catalog.parse_dataset("id1", {"name": "x"})
+    assert row["profile_enabled"] is False
+    assert row["identity_enabled"] is False
+
+
+def test_parse_dataset_extracts_schema_id_from_schema_ref():
+    row = catalog.parse_dataset("id1", {"schemaRef": {"id": "https://ns.adobe.com/acmecorp/schemas/loyalty-events", "contentType": "application/vnd.adobe.xed+json"}})
+    assert row["schema_id"] == "https://ns.adobe.com/acmecorp/schemas/loyalty-events"
+
+
+def test_parse_dataset_does_not_crash_when_tags_or_schema_ref_are_not_objects():
+    row = catalog.parse_dataset("id1", {"tags": "not-an-object", "schemaRef": "not-an-object"})
+    assert row["profile_enabled"] is False
+    assert row["schema_id"] == ""
+
+
+# --- Schema Registry (AEP) -------------------------------------------------------
+
+def test_parse_schema_summary_uses_meta_alt_id_when_dollar_id_is_absent():
+    row = schema_registry.parse_schema_summary({"meta:altId": "abc123", "title": "Loyalty Events"})
+    assert row["schema_id"] == "abc123"
+    assert row["title"] == "Loyalty Events"
+
+
+def test_flatten_fields_produces_dotted_paths_for_nested_objects():
+    schema = {
+        "properties": {
+            "timestamp": {"type": "string"},
+            "_acmecorp": {
+                "type": "object",
+                "properties": {
+                    "loyaltyId": {"type": "string", "title": "Loyalty ID"},
+                    "pointsBalance": {"type": "integer"},
+                },
+            },
+        }
+    }
+    fields = schema_registry.flatten_fields(schema)
+    paths = {f["path"] for f in fields}
+    assert paths == {"timestamp", "_acmecorp.loyaltyId", "_acmecorp.pointsBalance"}
+    loyalty_id = next(f for f in fields if f["path"] == "_acmecorp.loyaltyId")
+    assert loyalty_id["title"] == "Loyalty ID"
+
+
+def test_flatten_fields_recurses_into_array_item_objects_with_bracket_marker():
+    schema = {"properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+        "sku": {"type": "string"},
+    }}}}}
+    fields = schema_registry.flatten_fields(schema)
+    assert fields[0]["path"] == "items[].sku"
+
+
+def test_flatten_fields_is_sorted_and_handles_non_dict_input_without_raising():
+    assert schema_registry.flatten_fields("not-a-schema") == []
+    assert schema_registry.flatten_fields({}) == []
+    schema = {"properties": {"z_field": {"type": "string"}, "a_field": {"type": "string"}}}
+    fields = schema_registry.flatten_fields(schema)
+    assert [f["path"] for f in fields] == ["a_field", "z_field"]
+
+
+def test_flatten_fields_stops_at_max_depth_instead_of_hanging():
+    # A pathologically deep (but well-formed) nested schema should still
+    # terminate rather than recurse forever.
+    schema: dict = {"properties": {}}
+    cursor = schema["properties"]
+    for i in range(20):
+        cursor[f"level{i}"] = {"type": "object", "properties": {}}
+        cursor = cursor[f"level{i}"]["properties"]
+    cursor["leaf"] = {"type": "string"}
+    fields = schema_registry.flatten_fields(schema, max_depth=5)
+    assert fields == []  # the leaf sits deeper than max_depth, correctly dropped rather than raising
+
+
+def test_extract_label_descriptors_keeps_only_the_label_type_from_a_grouped_response():
+    """/tenant/descriptors groups by @type — extract_label_descriptors()
+    must return only xdm:descriptorLabel, not every descriptor type."""
+    grouped = {
+        "xdm:descriptorLabel": [{"@type": "xdm:descriptorLabel", "xdm:sourceProperty": "/a"}],
+        "xdm:descriptorIdentity": [{"@type": "xdm:descriptorIdentity", "xdm:sourceProperty": "/b"}],
+    }
+    items = schema_registry.extract_label_descriptors(grouped)
+    assert len(items) == 1
+    assert items[0]["xdm:sourceProperty"] == "/a"
+
+
+def test_extract_label_descriptors_handles_a_flat_array_fallback():
+    """The grouped-by-@type shape is this app's best-effort reading, not a
+    confirmed one (see the docstring) — a flat array is handled too, in
+    case that reading turns out wrong against a real tenant."""
+    flat = [
+        {"@type": "xdm:descriptorLabel", "xdm:sourceProperty": "/a"},
+        {"@type": "xdm:descriptorIdentity", "xdm:sourceProperty": "/b"},
+    ]
+    items = schema_registry.extract_label_descriptors(flat)
+    assert len(items) == 1
+    assert items[0]["xdm:sourceProperty"] == "/a"
+
+
+def test_extract_label_descriptors_returns_empty_for_an_unexpected_shape():
+    assert schema_registry.extract_label_descriptors(None) == []
+    assert schema_registry.extract_label_descriptors("not-a-response") == []
+    assert schema_registry.extract_label_descriptors({"xdm:descriptorLabel": "not-a-list"}) == []
+
+
+def test_parse_label_descriptor_normalizes_the_json_pointer_to_a_dotted_path():
+    # xdm:sourceSchema is a field-group id in real responses (confirmed
+    # live), not the composite schema's own $id — parse_label_descriptor()
+    # just carries the raw value through either way; it's
+    # fetch_schema_field_labels() in data.py that knows not to match on it.
+    row = schema_registry.parse_label_descriptor({
+        "xdm:sourceSchema": "https://ns.adobe.com/acmecorp/mixins/loyalty-program-details",
+        "xdm:sourceProperty": "/_acmecorp/loyaltyId",
+        "xdm:labels": ["core/I2", "core/C1"],
+    })
+    assert row["path"] == "_acmecorp.loyaltyId"
+    assert row["labels"] == ["core/I2", "core/C1"]
+    assert row["source_schema"] == "https://ns.adobe.com/acmecorp/mixins/loyalty-program-details"
+
+
+def test_parse_label_descriptor_defaults_to_no_labels_when_absent_or_malformed():
+    assert schema_registry.parse_label_descriptor({"xdm:sourceProperty": "/a"})["labels"] == []
+    assert schema_registry.parse_label_descriptor({"xdm:sourceProperty": "/a", "xdm:labels": "not-a-list"})["labels"] == []

@@ -1,0 +1,465 @@
+# Adobe Experience Cloud Monitor
+
+A single Streamlit dashboard for **AEP** (dataflow ingestion health, plus
+Adobe's own Observability Insights metrics and Data Lifecycle quota usage),
+**Data Collection / Tags** (property, extension & publish status), and
+**CJA** (connections & data views) — with history charts, self-clearing
+alerts, a side-by-side sandbox comparison, an audit-log view, and an
+offline mock mode so it's explorable before any Adobe credential exists.
+
+Sibling of [`adobe-access-manager`](../adobe-access-manager) — same
+conventions (pydantic-settings config, mock/live client split, hardened
+local SQLite storage, friendly error boxes), extended from user
+provisioning to cross-product monitoring.
+
+## What it watches
+
+| Page | API | Signal |
+|---|---|---|
+| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, and a data-lifecycle quota breakdown |
+| **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend |
+| **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
+| **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
+| **Data Collection** | Reactor | Extension review status, rule state, every library's build state (not just an assumed "latest" one — see limitations), environment build status (dev/staging/**production**), data element publish state |
+| **CJA** | CJA APIs | Connection status, data views built on each connection |
+| **Compare** | Flow Service + Observability + Schema Registry + Catalog + Reactor + CJA | Five comparison tabs — Sandboxes, Schemas, and Datasets are actual sandbox comparisons; DC Properties and CJA Data Views compare two picked entities instead (both are org-wide). Adobe has no built-in tool for any of these. |
+| **SDR** | CJA Dimensions/Metrics/Calculated Metrics + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), pulled from reality instead of a hand-maintained doc that drifts |
+| **Audit Log** | Audit Query + Reactor Audit Events + CJA Audit Logs | Who changed what and when, across all three products (best-effort — see below) |
+| **Alerts** | (derived) | Failed runs, rejected extensions, failed builds, unhealthy connections, near-limit quotas — self-clearing, optional Slack push |
+| **Diagnostics** | all clients | Per-product connection test, local SQLite health, log download |
+| **Settings** | (config) | Effective configuration (secrets masked) — credential, thresholds, base URLs |
+
+## Sandbox switcher
+
+A sidebar dropdown (populated from `ADOBE_SANDBOXES`, or just `ADOBE_SANDBOX`
+alone if that's not set) picks the **active AEP sandbox** for the whole app —
+Overview's AEP card, AEP Ingestion (including its Observability Insights
+section), Datasets, Audit Log, and SDR's AEP schema section all follow it,
+refetching automatically when it changes. It's session-only — it never
+writes back to `.env`. Data Collection, CJA, and the Quota page are org-wide
+in Adobe's architecture, so they ignore it entirely; Compare's Sandboxes,
+Schemas, and Datasets tabs ignore it too, since all three let you pick
+sandboxes explicitly and are inherently multi-sandbox already via
+`ADOBE_SANDBOXES`.
+
+Diagnostics' connection tests are a known exception: they always test
+against the `.env`-configured default sandbox, not whichever one is
+currently active in the switcher.
+
+## Names, not IDs
+
+Every page shows a human name — a flow, property, connection, data view,
+schema, or dataset's actual name/title — never a raw Adobe ID, including
+where a reference crosses entities (a dataset's schema binding, a data
+view's connection). `data.py` exposes small `fetch_*_titles()`-style
+resolvers for exactly this (e.g. `fetch_schema_titles()`) so a page never
+has to show an unresolved ID while it waits on a separate lookup; every
+resolver falls back to something readable (a shortened ID, never a full
+raw URL) if a reference can't be resolved (e.g. a schema in a different
+container, or deleted since the reference was created) rather than
+showing nothing.
+
+## Compare
+
+Five tabs, each a different axis — worth being precise about since only
+three are actually about sandboxes:
+
+| Tab | Compares | Sandbox-based? |
+|---|---|---|
+| **Sandboxes** | AEP flow health + Observability metrics across every sandbox in `ADOBE_SANDBOXES` | Yes |
+| **Schemas** | Any schema in sandbox A vs. any schema in sandbox B — each side picked independently | Yes |
+| **Datasets** | Any dataset in sandbox A vs. any dataset in sandbox B — same independent-per-side pattern as Schemas; compares name, description, schema binding, Profile/Identity enablement | Yes |
+| **DC Properties** | Two picked properties' extensions/rules/libraries/environments/data elements | No — DC is org-wide |
+| **CJA Data Views** | Two picked data views' dimensions/metrics | No — CJA is org-wide |
+
+The Datasets tab renders differently from the other four: a dataset is a
+single flat object (name, schema binding, two booleans), not a list of
+named sub-items, so there's no natural "only in A / only in B" bucket the
+way there is for a property's extensions or a schema's fields — it's a
+plain field-by-field "changed / not changed" table instead of the
+metrics-plus-buckets layout every other tab uses.
+
+The Schemas tab picks sandbox and schema independently on each side —
+side B defaults to the same schema *title* as side A when that title
+exists in side B's sandbox too (the common case: comparing "the same"
+schema across two sandboxes, where each sandbox has its own independent
+copy under a different `$id`, so there's no way to default by ID), but
+nothing forces it — pick a different schema on either side to compare
+genuinely different schemas instead, and the tab says so explicitly when
+the two titles don't match. Every tab's diff shows the same three
+buckets: only in A, only in B, and
+*changed* (present in both but with a different value on a compared field
+— e.g. a schema field whose type changed, or a rule that's enabled on one
+side and disabled on the other) — not just presence/absence.
+
+### Drift: comparing against your own history
+
+Schemas, Datasets, DC Properties, and CJA Data Views each have a
+**"Compare against"** switch: *Another sandbox/entity* (above) or **Last
+snapshot (drift)** — the same entity checked against its own most recent
+recorded state, instead of against a different sandbox or entity. Useful
+for catching "did this change since I last looked?" on a single schema,
+dataset, property, or data view, without needing a second one to compare
+it to.
+
+Snapshots are **opt-in, per entity** — nothing is recorded until you
+actually pick an entity in drift mode. The first time is always "no prior
+snapshot — this is now the baseline"; only the *second* time (later in the
+same session, or on a later visit) shows an actual diff, against whatever
+was recorded last. Every drift check also re-records the current state as
+the new latest snapshot, so the next check compares against *this* one.
+Sandboxes tab has no drift mode — org-wide sandbox comparisons don't have
+a single "entity" to snapshot.
+
+Snapshots accumulate in `aep_monitor.db`'s `entity_snapshots` table and
+persist across app restarts. `poller_cli.py` (see below) also sweeps every
+entity that already has at least one snapshot on each scheduled run, so
+baselines stay fresh even if nobody opens Compare between two checks — but
+it only *sweeps* existing baselines, it never originates a new one; that
+still only happens the first time you pick an entity in the UI.
+
+## Quick start
+
+```bash
+./start-unix.sh      # or start-windows.bat on Windows
+```
+
+This creates a `.venv`, installs dependencies, copies `.env.example` to
+`.env` on first run, and launches the app at `http://localhost:8501` — in
+**mock mode** by default, so every page has realistic sample data
+immediately.
+
+## Going live
+
+One Adobe I/O credential covers every product this app talks to.
+
+1. In [Adobe Developer Console](https://developer.adobe.com/console),
+   create **one** project and add all three: **Experience Platform API**
+   (AEP / Audit Query / Observability / Quota), **Experience Platform
+   Launch API** (Data Collection), and **Customer Journey Analytics API**
+   (CJA). Choose **OAuth Server-to-Server** and select a product profile
+   with access to each.
+2. Fill in `.env` — `ADOBE_ORG_ID`, `ADOBE_CLIENT_ID`, `ADOBE_CLIENT_SECRET`,
+   and `ADOBE_SCOPES` (the combined scope string the console shows once
+   all three APIs are added) — and set `MOCK_MODE=false`.
+3. Restart the app. Use the **Diagnostics** page to test each product's
+   connection individually.
+
+Credentials always live in `.env`, never typed into the app or committed —
+`.gitignore` excludes it, and `.env`'s file permissions are hardened to the
+owning user at startup (POSIX).
+
+## History & continuous polling
+
+Every page's **Refresh from Adobe** button also writes a snapshot to
+`aep_monitor.db` (SQLite) and re-evaluates alerts. History only accumulates
+while something is actually refreshing — for a continuously-updating trend
+line and alerts that fire even with the app closed, schedule the included
+CLI poller:
+
+```bash
+*/15 * * * * cd /path/to/aep-monitor && ./.venv/bin/python poller_cli.py >> logs/poller_cron.log 2>&1
+```
+
+Both the app and `poller_cli.py` read/write the same database file.
+`poller_cli.py` also sweeps every entity that already has a Compare
+"vs. last snapshot" drift baseline (see [Drift: comparing against your own
+history](#drift-comparing-against-your-own-history)), keeping those fresh
+too — a sweep failure is logged and doesn't fail the rest of the cron run.
+
+## Alerts
+
+An alert is generated the moment a refresh finds:
+- an AEP flow's latest run failed, or exceeded `ALERT_FAILED_RECORDS_THRESHOLD` failed records,
+- a Data Collection extension with review status `rejected`/`failed`, *any* of a property's libraries in a `failed`/`rejected` build state, or its **production** environment's build status `failed` (dev/staging failures aren't alerted — only production),
+- a CJA connection marked `disabled` or `deleted` — the only two health signals Adobe's API actually exposes (`isDisabled`/`isDeleted`; there's no status enum, unlike the other products above),
+- a data-lifecycle quota reaching `ALERT_QUOTA_THRESHOLD_PCT` percent consumed.
+
+Adobe also has its own native alerting on top of Observability Insights
+metrics (UI notification bell, forwardable to Slack via an App Builder
+proxy) — a second, Adobe-owned alert path independent of this app's, worth
+knowing about if you want alerting Adobe manages centrally instead.
+
+Each alert is deduplicated by a fingerprint (so repeated polls don't spam
+duplicates) and **automatically resolves** the next time that condition is
+no longer present — no manual bookkeeping required, though you can also
+resolve one by hand from the Alerts page. Set `SLACK_WEBHOOK_URL` to also
+push newly-opened alerts to a Slack channel (an [Incoming Webhook](https://api.slack.com/messaging/webhooks)),
+once per alert, not on every subsequent poll while it's still open.
+
+## Known limitations / things to verify against your tenant
+
+- **Audit Query API** parsing (`aep_monitor/clients/audit.py`) is the least
+  exercised part of this app — its exact query-parameter and response
+  contract wasn't verified against a live tenant while building this.
+  Check your first live response (the Audit Log page shows the raw JSON)
+  and adjust `list_events()`/`parse_event()` if your tenant's shape
+  differs. Two real gaps found and fixed this way already:
+  - It originally shipped without an `x-sandbox-name` header, which
+    Adobe's own docs didn't call out as required for this endpoint — it
+    is, and omitting it is a hard `HTTP 400 "Missing Sandbox
+    Information"`. The Quota client now sends it defensively for the same
+    reason, even though its docs didn't flag it as required either.
+  - Events sit under a HAL-style `_embedded.events` envelope, not a
+    top-level `events`/`data`/`items` key as originally guessed. This one
+    is worth calling out specifically: it produced *no error at all* —
+    the request succeeded, the parser just silently found nothing at the
+    wrong key, and the page showed "No audit events returned" as if
+    there genuinely were none. (The mock data was built to the same wrong
+    guessed shape too, so the test suite validated the parser against its
+    own mistake and could never have caught this — now fixed to mirror
+    the real raw shape, per mock.py's own stated convention.) Also
+    unresolved: Adobe's own docs page for this endpoint labels it GET in
+    one section and shows a POST curl example in another, self-flagged as
+    an inconsistency — left as GET (what was already in place and, per
+    the fix above, apparently correct), switch to POST if you see a
+    404/405 against your tenant.
+- **Reactor Audit Events** (`list_audit_events()`/`parse_audit_event()` in
+  `clients/reactor.py`) — Adobe's own docs for `/audit_events` say
+  plainly "the implementation... is in flux" as the feature evolves, so
+  treat field names (`attributed_to_email`, `type_of`, ...) as more
+  likely to drift here than anywhere else in this app.
+- **Reactor Environments/Data Elements** (`list_environments()`/
+  `list_data_elements()` in `clients/reactor.py`) are documented (unlike
+  Audit Events above) but, like the rest of this Reactor client, weren't
+  exercised against a live tenant while building this — the same
+  `attributes.*` field names Adobe's docs give (`stage`, `status`,
+  `dirty`, `review_status`, ...) are used, parsed defensively. Adobe's
+  docs also don't enumerate every possible `status` value for an
+  environment — only `succeeded`/`pending` are shown in examples —
+  `failed` is assumed (consistent with every other build-status field in
+  this app) but not confirmed exhaustively; adjust
+  `_BAD_ENVIRONMENT_STATUSES`/`_GOOD_ENVIRONMENT_STATUSES` in
+  `clients/reactor.py` if your tenant uses a value neither set catches.
+- **AEP Catalog (Datasets)** (`clients/catalog.py`) has two shape details
+  confirmed via Adobe's docs that are genuinely different from every other
+  Adobe API this app talks to: `GET /dataSets` returns an object **keyed
+  by dataset ID**, not an array (the id only exists as the dict key,
+  never inside the dataset's own value object — `parse_dataset()` takes
+  the id and the value as two separate arguments for exactly this
+  reason), and Adobe only returns a small default field subset unless you
+  explicitly request more via the `properties` query parameter — this
+  app requests `name,description,schemaRef,tags,created,updated`
+  explicitly rather than relying on the default. Also: `tags.unifiedProfile`/
+  `tags.unifiedIdentity` are lists of strings like `["enabled:true"]`, not
+  booleans — read carefully (a naive `bool(tags.get(...))` would
+  incorrectly read `True` for `["enabled:false"]` too, since a non-empty
+  list is truthy regardless of its contents).
+- **CJA Audit Logs** (`list_audit_logs()`/`parse_audit_log()` in
+  `clients/cja.py`) lives at a genuinely separate base URL
+  (`cja.adobe.io/auditlogs/api/v1`, not the `/data` path every other CJA
+  endpoint uses) — confirmed via Adobe's own docs, which is why this one
+  bypasses `self.get()`'s base-URL prefixing and calls `_request()`
+  directly with a full URL. If it comes back empty, it's likely the same
+  CJA "product administration" privilege gap documented above for
+  Connections/data views, not a separate issue.
+- **CJA Calculated Metrics** (`list_calculated_metrics()`/
+  `parse_calculated_metric()` in `clients/cja.py`) is a *third* separate
+  CJA base URL (`cja.adobe.io/calculatedmetrics`), confirmed the same way
+  as Audit Logs above. Two things are explicitly *not* confirmed and
+  handled defensively rather than assumed: (1) there's no documented
+  per-data-view filter query parameter for this endpoint, unlike
+  dimensions/metrics — so this app fetches the full org-wide list and
+  filters client-side by the response's `dataId` field instead of trusting
+  an unconfirmed parameter; (2) Adobe's docs don't explicitly state that
+  `dataId` *is* the data view id (only that it's present on the response
+  and lines up with that id space in every example seen) — treat that
+  association as reasonably confident, not fully confirmed, and check your
+  own tenant's response if calculated metrics don't show up where
+  expected.
+- **Schema field labels** (SDR page's "Labels" column, `list_label_descriptors()`/
+  `extract_label_descriptors()`/`parse_label_descriptor()` in
+  `clients/schema_registry.py`) are data-governance/DULE labels (e.g.
+  `core/I2` Identifiable, `core/S2` Sensitive, `core/C1` Contract data)
+  read from the Schema Registry's Descriptors API (`GET /tenant/descriptors`,
+  `@type: xdm:descriptorLabel`). Confirmed **live**, not just from docs
+  (Adobe's own reference doc for this endpoint doesn't even list
+  `xdm:descriptorLabel` as a supported type): the list response is grouped
+  by `@type` with full descriptor objects (`{"xdm:descriptorLabel": [{...}]}`),
+  and `property=<field>==<value>` is a real, repeatable, ANDed server-side
+  filter (undocumented — Adobe's own UI uses it under the hood) — this app
+  uses `property=@type==xdm:descriptorLabel` to fetch only label
+  descriptors instead of every descriptor type.
+
+  One thing that *did* need a real fix (not just confirming a guess): a
+  label descriptor's `xdm:sourceSchema` is a **field group** id (e.g.
+  `.../mixins/xxxx`), not the composite schema's own `$id` — matching
+  against the schema's `$id` (the first version of this feature) silently
+  matched nothing, ever. There's also no way to resolve which field groups
+  compose a given schema (the "full resolved" schema response has no
+  `allOf` field-group list, confirmed live), so `fetch_schema_field_labels()`
+  matches by **field path** instead — correct even for a label on a field
+  group shared across multiple schemas, since `flatten_fields()` already
+  merges every field group's properties into one flat tree per schema.
+
+  A second real fix, also found live: this app originally sent `limit=500`
+  (the general Schema Registry docs' page-size max elsewhere), and Adobe
+  returned an actual HTTP 400 `"Query limit out of range... valid query
+  limit is 0 - 300"` — this endpoint's real max, confirmed live, is 300.
+  If labels still don't show up (or a warning appears instead) after all
+  of the above, the SDR page's "Raw label descriptors" expander (next to
+  "Raw schema response") shows every descriptor Adobe actually returned
+  for the active sandbox, and surfaces a fetch failure as a visible
+  warning instead of silently defaulting to empty — check that before
+  assuming it's another shape/limit surprise.
+
+  **Still not confirmed:** how a field nested inside an array renders in a
+  descriptor's JSON-pointer `sourceProperty` (the schema fields table marks
+  those `arrayField[]...`, a convention this app invented for display —
+  no live example of a labeled array-nested field has been seen), so such
+  a field's label may not match up. Pagination beyond 300 descriptors also
+  isn't implemented (the documented mechanism for it, a separate `v2`
+  `Accept` header, isn't confirmed) — a sandbox with 300+ label descriptors
+  specifically could miss some.
+- **Flow Service** response field names (`recordSummary`, `statusSummary`,
+  ...) come from Adobe's published docs but are known to vary slightly by
+  source type. Parsing is defensive (`.get()` with fallbacks) and every
+  page keeps the raw JSON in an expander specifically so a shape mismatch
+  is visible instead of silently wrong.
+- There is no documented "all runs org-wide" Flow Service endpoint —
+  monitoring fans out one `/runs?property=flowId==...` call per flow
+  (capped to the flows returned by `/flows`) rather than guessing at an
+  undocumented one.
+- CJA's `/connections` and `/dataviews` list-response envelope
+  (`content` vs `data` vs a bare array) is handled defensively for the
+  same reason. (Historical: the CJA base URL itself was originally missing
+  the `/data` path prefix every CJA endpoint actually lives under — a
+  live-only bug, since mock mode never hits a real URL, so it went
+  unnoticed until confirmed against Adobe's endpoint docs and fixed.)
+- (Historical, fixed) **CJA Connections and Data views showed raw ids
+  instead of names.** Root cause, confirmed via Adobe's docs: `/connections`
+  and `/dataviews` only include `name`/`owner`/etc. when explicitly
+  requested via the `expansion` query param — not by default — which
+  `list_connections()`/`list_dataviews()` weren't sending. Also fixed in
+  the same pass, found via the same docs check: a data view's FK back to
+  its connection is `parentDataGroupId`, not `connectionId`/
+  `dataConnectionId` as originally guessed (so the Data views table's
+  "Connection" column couldn't resolve to a name even once `name` itself
+  was fixed); and CJA connections have no status enum at all — no
+  `status`/`serviceStatus` field exists — only `isDeleted`/`isDisabled`
+  booleans, which the connection health status/alert (see Alerts above)
+  now derives from instead of a field that was always empty in live mode.
+  Because mock data mirrored the *intended* parsed shape rather than the
+  real (expansion-gated) raw response, none of this showed up in mock mode
+  — same class of gap as the Audit Query envelope bug elsewhere in this
+  list, and the reason mock data is held to "shaped exactly like the raw
+  API response" as a rule, not just "has the right fields eventually."
+- **CJA Connections showing 0 with no error** is expected, not a bug, for
+  a Server-to-Server (technical account) credential without extra
+  privileges: Adobe's own docs for this endpoint say plainly, "In order to
+  view all connections, you must have product administration privileges
+  associated with your account" — without that, the API call succeeds
+  (200 OK) and returns only connections *owned by* the calling account,
+  which for a service account is normally none. Selecting a product
+  profile during Developer Console credential setup only makes the
+  technical account a basic *member* of that profile (why the API call
+  already succeeds at all) — not an *admin* of it, which is the extra
+  step actually needed here.
+
+  **Data Views is governed separately — confirmed live, not just
+  theorized**: granting Product Administrator fixes Connections, but
+  Data Views only needs the technical account's Product Profile to have
+  the required Data Views assigned under its own Permissions tab (an
+  ordinary permission, unrelated to the admin flag). Tested directly:
+  revoking the admin grant and keeping just that profile assignment left
+  Data Views working while Connections went back to showing 0. Since
+  Product Administrator also grants managing the profile itself (not
+  just read visibility), **only grant it if you actually need
+  Connections** — for Data Views alone, the profile assignment is
+  sufficient and is the least-privilege choice.
+
+  To find the technical account email (only needed if you do want
+  Connections too): easiest is Developer Console → this app's project →
+  the credential itself → its overview page shows "Technical account
+  email" right near the Client ID/Secret. (Admin Console → Users →
+  **API Credentials** — a distinct sub-item, *not* the regular Users
+  list, which won't show it — works too.) Then: Admin Console → Products
+  → Customer Journey Analytics → the product profile this credential
+  uses → **Admins** tab → paste that email, select it from the dropdown
+  (resolves to an Enterprise ID), assign as Product Profile
+  Administrator. The CJA and SDR pages show this same explanation in-app
+  when Connections comes back empty.
+- **SDR page** (`aep_monitor/clients/cja.py`'s dimensions/metrics
+  endpoints, `aep_monitor/clients/schema_registry.py`) is the newest,
+  least-exercised integration in this app — same caveat as Audit Query.
+  The Schema Registry list-response envelope key (`results` vs
+  `resources` vs `data`) and the exact resolved-schema `properties` shape
+  after requesting `xed-full+json` weren't verified against a live
+  tenant; `flatten_fields()` is defensive and depth-capped, but if a
+  schema shows zero fields where you expect some, check the page's
+  underlying raw response shape against what `parse_schema_summary()`/
+  `flatten_fields()` assume before concluding the schema is actually
+  empty.
+- **Observability Insights** (`aep_monitor/clients/observability.py`) only
+  wraps the one endpoint confirmed in Adobe's own published Postman
+  collection (`POST /metrics`) and only two metric IDs confirmed from
+  Adobe's own example request (`recordsuccess.count`, `batchfailed.count`).
+  Adobe's marketing docs describe additional "health-check categories"
+  (Query Service, Merge Policies, Segmentation, ...) but no distinct
+  endpoint or metric IDs for them were found — add metric IDs to
+  `DEFAULT_HEALTH_METRICS` once you've confirmed the exact string in your
+  tenant rather than guessing. Also unresolved: whether `x-sandbox-id` is
+  actually required (one doc says yes, the Postman collection says no) —
+  left optional, set `ADOBE_SANDBOX_ID` only if requests fail without it.
+  When Compare's Sandboxes or Schemas tabs override `x-sandbox-name` per
+  sandbox, they drop `x-sandbox-id` from that request entirely rather
+  than sending it paired with the wrong sandbox's name — there's no
+  per-sandbox ID configured, so the global one is only valid for the
+  configured default sandbox. Also: datapoints aren't documented as
+  chronologically ordered, so the parser sorts them defensively — both
+  the trend chart and Compare's Sandboxes tab's "latest value" lookup
+  depend on that ordering.
+- **Data Lifecycle Quota API** covers governance quotas (dataset
+  expiration, consumer-delete/privacy-request identities) — it is *not* a
+  live "requests remaining before a 429" API. Adobe doesn't publish one;
+  its per-service rate limits are static numbers shown as reference text
+  on the Settings page.
+- **Compare's Sandboxes and Schemas tabs** only cover AEP (Flow Service,
+  Observability Insights, Schema Registry) because that's the only one of
+  the three products that's actually sandbox-scoped in Adobe's
+  architecture — Data Collection properties, CJA connections/data views,
+  and data-lifecycle quotas are org-wide, so they don't vary by sandbox.
+  The DC Properties and CJA Data Views tabs compare two picked entities
+  instead of two sandboxes, for the same reason.
+- **Compare's Schemas tab** only *defaults* side B to matching side A's
+  schema by `title` (each sandbox has its own independent copy under a
+  different `$id`, so there's no way to default by ID) — both sides
+  remain independently selectable, so comparing two genuinely different
+  schemas (whether across sandboxes or the same sandbox) works too, and
+  the tab says so explicitly whenever the two selected titles differ.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt   # runtime deps + pytest/pyflakes
+python -m pytest                        # unit tests + Streamlit AppTest page-render suite
+python -m pyflakes aep_monitor app.py poller_cli.py tests
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions (mock-first development, where
+business logic vs. UI code belongs, how to add a new Adobe API integration) and
+[`SECURITY.md`](SECURITY.md) to report a vulnerability privately. Licensed under
+[MIT](LICENSE).
+
+## Project layout
+
+```
+app.py                   Streamlit entry point / page router
+poller_cli.py             Standalone poll-once-and-exit script for cron
+aep_monitor/
+  config.py                Settings (pydantic-settings, .env-backed)
+  auth.py                   Adobe IMS token issuance/caching
+  errors.py, retry.py       Friendly errors + transient-failure retry policy
+  database.py               SQLite: history snapshots + alert log
+  data.py                    Mock/live fetch, parsed into consistent rows
+  poller.py                  fetch -> snapshot -> evaluate alerts, per product
+  alerts.py                  Alert conditions, dedupe, Slack push
+  clients/
+    base.py                    Shared HTTP plumbing (pacing, auth headers, errors)
+    aep.py, reactor.py,        One client + parse_*() per product
+    cja.py, audit.py,
+    observability.py, quota.py
+    mock.py                    Sample data, shaped like raw API responses
+  ui/                        One module per Streamlit page
+tests/                     pytest — business logic (unit) + tests/test_app_pages.py (Streamlit AppTest)
+```
