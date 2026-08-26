@@ -53,3 +53,27 @@ def test_fetch_schema_field_labels_filters_by_field_path_not_source_schema():
 def test_fetch_schema_field_labels_returns_empty_when_no_known_path_matches():
     assert data.fetch_schema_field_labels({"some.field.web-events.doesnt.have"}) == {}
     assert data.fetch_schema_field_labels(set()) == {}
+
+
+def test_fetch_cja_component_usage_filters_projects_by_dataview_and_counts_usage():
+    """dv-exec has 2 mock projects; "Conversion Rate" is referenced by both,
+    "Page"/"Visits"/"Average Order Value" by one each. dv-mktg's project
+    must not leak into dv-exec's usage counts."""
+    usage = data.fetch_cja_component_usage("dv-exec")
+    assert usage["cm-conv-rate"]["projects"] == ["Executive Weekly Report", "Conversion Deep Dive"]
+    assert usage["variables/page"]["projects"] == ["Executive Weekly Report"]
+    assert usage["cm-aov"]["projects"] == ["Conversion Deep Dive"]
+    assert "cm-cost-per-lead" not in usage  # belongs to dv-mktg's project, not dv-exec's
+
+
+def test_fetch_cja_component_usage_excludes_report_suite_and_date_range_noise():
+    """The data view ("ReportSuite") and date range on every panel are also
+    __entity__-tagged in the real response but aren't "components" in the
+    sense this feature means — they must not show up as usage entries."""
+    usage = data.fetch_cja_component_usage("dv-exec")
+    assert "dv-exec" not in usage
+    assert all(v["type"] not in {"ReportSuite", "DateRange"} for v in usage.values())
+
+
+def test_fetch_cja_component_usage_returns_empty_for_a_dataview_with_no_projects():
+    assert data.fetch_cja_component_usage("not-a-real-dataview") == {}

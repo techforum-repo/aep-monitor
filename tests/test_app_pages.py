@@ -62,6 +62,32 @@ def test_sdr_page_loads_dataview_components_and_schema_fields_on_selection():
     assert "Calculated Metrics (2)" in tab_labels  # dv-exec's 2 calc metrics, per mock data
 
 
+def test_sdr_page_component_usage_tab_is_opt_in_then_shows_real_usage():
+    """The Component Usage tab is gated behind a "Load project usage"
+    button (one API call per bound project — deliberately not auto-fetched
+    like the other three tabs), then shows real per-component project
+    counts once loaded."""
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.radio(key="navigation").set_value("SDR").run()
+    assert at.exception == []
+
+    tab_labels = [t.label for t in at.tabs]
+    assert "Component Usage" in tab_labels
+    # Not loaded yet — no usage table, just the load button.
+    assert not any("Used in projects" in df.value.columns for df in at.get("dataframe"))
+
+    at.button(key="sdr_load_component_usage").click().run()
+    assert at.exception == []
+
+    usage_table = next(df.value for df in at.get("dataframe") if "Used in projects" in df.value.columns)
+    by_name = usage_table.set_index("Name")
+    assert by_name.loc["Conversion Rate", "Used in projects"] == 2
+    assert by_name.loc["Marketing Channel", "Used in projects"] == 0  # unused, per mock data
+    caption_text = " ".join(c.value for c in at.caption)
+    assert "not referenced by any of its bound projects" in caption_text
+
+
 def test_sdr_page_schema_fields_table_shows_data_governance_labels():
     """The schema fields table's "Labels" column — DULE labels (e.g.
     core/I2) fetched from the Schema Registry's Descriptors API, per field

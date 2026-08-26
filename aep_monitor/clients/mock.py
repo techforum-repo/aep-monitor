@@ -204,6 +204,57 @@ MOCK_CALCULATED_METRICS: list[dict[str, Any]] = [
     {"id": "cm-cost-per-lead", "name": "Cost per Lead", "description": "Ad spend / Leads", "type": "currency", "polarity": "negative", "dataId": "dv-mktg", "owner": {"ownerId": 67890}},
 ]
 
+# Shaped like the confirmed real /projects list response — a bare array,
+# not a {"content": [...]} envelope like every other CJA list endpoint
+# (see clients/cja.py's list_projects() docstring).
+MOCK_PROJECTS: list[dict[str, Any]] = [
+    {"id": "proj-exec-1", "name": "Executive Weekly Report", "description": "", "type": "project", "dataId": "dv-exec", "owner": {"imsUserId": "jordan.lee@acme.com", "ownerId": "jordan.lee@acme.com", "name": None, "type": "imsUser"}, "created": _iso(60 * 24 * 20)},
+    {"id": "proj-exec-2", "name": "Conversion Deep Dive", "description": "", "type": "project", "dataId": "dv-exec", "owner": {"imsUserId": "sam.ortiz@acme.com", "ownerId": "sam.ortiz@acme.com", "name": None, "type": "imsUser"}, "created": _iso(60 * 24 * 5)},
+    {"id": "proj-mktg-1", "name": "Campaign Performance", "description": "", "type": "project", "dataId": "dv-mktg", "owner": {"imsUserId": "sam.ortiz@acme.com", "ownerId": "sam.ortiz@acme.com", "name": None, "type": "imsUser"}, "created": _iso(60 * 24 * 10)},
+]
+
+
+def _mock_entity(entity_id: str, entity_type: str, name: str) -> dict[str, Any]:
+    return {"id": entity_id, "__entity__": True, "type": entity_type, "__metaData__": {"name": name}}
+
+
+# Shaped like the confirmed real get_project(expansion=definition) response
+# — a `definition` object whose deeply nested panel/subPanel/reportlet tree
+# holds component references tagged `__entity__: true` (confirmed live on
+# an empty test project's date-range/data-view entries; the exact `type`
+# strings for a Dimension/Metric/CalculatedMetric reference specifically
+# weren't confirmed from a real populated project, so these are this app's
+# best-effort naming, not verified against a live example — see
+# extract_entity_references()'s docstring). Deliberately built so some
+# MOCK_DIMENSIONS/MOCK_METRICS/MOCK_CALCULATED_METRICS entries are
+# referenced here and some aren't (e.g. "Marketing Channel" and "Revenue"
+# are never referenced by any project) — so mock mode demonstrates both
+# "used in N projects" and "unused" cases, not just the happy path.
+MOCK_PROJECT_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "proj-exec-1": {"workspaces": [{"id": "ws-1", "name": "", "panels": [{
+        "id": "panel-1", "name": "Freeform", "reportSuite": _mock_entity("dv-exec", "ReportSuite", "Executive Dashboard View"),
+        "subPanels": [{"id": "sub-1", "reportlet": {"columnTree": {"nodes": [
+            _mock_entity("variables/page", "Dimension", "Page"),
+            _mock_entity("metrics/visits", "Metric", "Visits"),
+            _mock_entity("cm-conv-rate", "CalculatedMetric", "Conversion Rate"),
+        ]}}}],
+    }]}]},
+    "proj-exec-2": {"workspaces": [{"id": "ws-2", "name": "", "panels": [{
+        "id": "panel-2", "name": "Freeform", "reportSuite": _mock_entity("dv-exec", "ReportSuite", "Executive Dashboard View"),
+        "subPanels": [{"id": "sub-2", "reportlet": {"columnTree": {"nodes": [
+            _mock_entity("cm-conv-rate", "CalculatedMetric", "Conversion Rate"),
+            _mock_entity("cm-aov", "CalculatedMetric", "Average Order Value"),
+        ]}}}],
+    }]}]},
+    "proj-mktg-1": {"workspaces": [{"id": "ws-3", "name": "", "panels": [{
+        "id": "panel-3", "name": "Freeform", "reportSuite": _mock_entity("dv-mktg", "ReportSuite", "Marketing Attribution View"),
+        "subPanels": [{"id": "sub-3", "reportlet": {"columnTree": {"nodes": [
+            _mock_entity("variables/campaign", "Dimension", "Campaign"),
+            _mock_entity("cm-cost-per-lead", "CalculatedMetric", "Cost per Lead"),
+        ]}}}],
+    }]}]},
+}
+
 # Matches the confirmed real response shape (content[] with user/component
 # sub-objects) — not the auditlogs/api/v1 namespace's own guessed shape,
 # since Adobe's docs gave a complete example this time.

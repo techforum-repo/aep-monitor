@@ -190,6 +190,72 @@ def test_parse_calculated_metric_does_not_crash_when_owner_is_not_an_object():
     assert row["owner"] == ""
 
 
+def test_parse_project_extracts_data_id_as_dataview_id():
+    row = cja.parse_project({
+        "id": "proj1", "name": "Executive Weekly Report", "dataId": "dv-exec",
+        "owner": {"ownerId": "jordan.lee@acme.com"}, "created": "2026-08-01T00:00:00Z",
+    })
+    assert row["project_id"] == "proj1"
+    assert row["dataview_id"] == "dv-exec"
+    assert row["owner"] == "jordan.lee@acme.com"
+
+
+def test_parse_project_falls_back_to_id_when_name_is_absent():
+    row = cja.parse_project({"id": "proj1"})
+    assert row["name"] == "proj1"
+
+
+def test_extract_entity_references_finds_entities_at_any_nesting_depth():
+    """Confirmed live: Adobe tags any referenced component with
+    `__entity__: true` wherever it sits in the deeply nested panel/
+    subPanel/reportlet tree — the walker must find one buried several
+    levels deep, not just at the top level."""
+    definition = {
+        "workspaces": [{
+            "panels": [{
+                "reportSuite": {"id": "dv-exec", "__entity__": True, "type": "ReportSuite", "__metaData__": {"name": "Executive Dashboard View"}},
+                "subPanels": [{
+                    "reportlet": {"columnTree": {"nodes": [
+                        {"id": "variables/page", "__entity__": True, "type": "Dimension", "__metaData__": {"name": "Page"}},
+                    ]}},
+                }],
+            }],
+        }],
+    }
+    refs = cja.extract_entity_references(definition)
+    ids = {r["id"] for r in refs}
+    assert ids == {"dv-exec", "variables/page"}
+    page_ref = next(r for r in refs if r["id"] == "variables/page")
+    assert page_ref["type"] == "Dimension"
+    assert page_ref["name"] == "Page"
+
+
+def test_extract_entity_references_ignores_dicts_without_the_entity_marker():
+    definition = {"workspaces": [{"panels": [{"id": "panel-1", "name": "Freeform", "position": {"x": 0, "y": 0}}]}]}
+    assert cja.extract_entity_references(definition) == []
+
+
+def test_extract_entity_references_falls_back_to_id_when_metadata_name_missing():
+    row = cja.extract_entity_references({"id": "cm-1", "__entity__": True, "type": "CalculatedMetric"})
+    assert row[0]["name"] == "cm-1"
+
+
+def test_extract_entity_references_handles_non_dict_input_without_raising():
+    assert cja.extract_entity_references(None) == []
+    assert cja.extract_entity_references("not-a-definition") == []
+    assert cja.extract_entity_references([]) == []
+
+
+def test_extract_entity_references_stops_at_max_depth_instead_of_hanging():
+    definition: dict = {}
+    cursor = definition
+    for i in range(60):
+        cursor["nested"] = {}
+        cursor = cursor["nested"]
+    cursor["leaf"] = {"id": "too-deep", "__entity__": True, "type": "Dimension"}
+    assert cja.extract_entity_references(definition, max_depth=10) == []
+
+
 def test_parse_audit_log_extracts_user_and_component_sub_objects():
     row = cja.parse_audit_log({
         "id": "al1", "dateCreated": "2026-08-24T00:00:00Z", "action": "EDIT",

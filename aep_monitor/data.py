@@ -179,6 +179,64 @@ def fetch_cja_calculated_metrics(dataview_id: str) -> list[dict[str, Any]]:
     return [m for m in parsed if m["dataview_id"] == dataview_id]
 
 
+def fetch_cja_projects() -> list[dict[str, Any]]:
+    """Every CJA Workspace project, org-wide — a cheap list call with no
+    definitions (see fetch_cja_component_usage() below for the per-project
+    definition fetch this feeds into)."""
+    if settings.mock_mode:
+        raw = mock.MOCK_PROJECTS
+    else:
+        async def _load():
+            async with cja_client._new_http_client() as http:  # noqa: SLF001
+                return await cja_client.list_projects(http)
+        raw = run_async(_load())
+    return [cja_api.parse_project(item) for item in raw]
+
+
+def fetch_cja_component_usage(dataview_id: str) -> dict[str, dict[str, Any]]:
+    """{component_id: {"name", "type", "projects": [project names]}} for
+    every dimension/metric/calculated-metric/etc. referenced by any CJA
+    Workspace project bound to this data view — lets SDR's Component Usage
+    view show what's actually *in use* (and, by omission, what isn't)
+    rather than just what's defined. One fetch_cja_projects() call plus one
+    get_project(expansion=definition) call per project bound to this data
+    view — N+1 by nature (Adobe's projects endpoint has no "give me every
+    definition in one call" option), so this is deliberately NOT
+    auto-fetched on page load; the UI gates it behind an explicit button.
+    Filtered to this data view client-side — fetch_cja_projects() already
+    returns every project org-wide, and Adobe's docs don't confirm a
+    dataId filter query param for the list endpoint to push that filtering
+    server-side instead. Excludes "ReportSuite"/"DateRange" entity types —
+    confirmed live (from a real project's definition) as panel *framing*
+    (which data view / date range a panel uses), not a shared component in
+    the sense this view is meant to surface."""
+    _NON_COMPONENT_TYPES = {"ReportSuite", "DateRange"}
+    projects = [p for p in fetch_cja_projects() if p["dataview_id"] == dataview_id]
+
+    if settings.mock_mode:
+        definitions = {p["project_id"]: mock.MOCK_PROJECT_DEFINITIONS.get(p["project_id"], {}) for p in projects}
+    else:
+        async def _load():
+            async with cja_client._new_http_client() as http:  # noqa: SLF001
+                result: dict[str, Any] = {}
+                for p in projects:
+                    full = await cja_client.get_project(http, p["project_id"])
+                    result[p["project_id"]] = full.get("definition") if isinstance(full, dict) else {}
+                return result
+        definitions = run_async(_load())
+
+    usage: dict[str, dict[str, Any]] = {}
+    for p in projects:
+        definition = definitions.get(p["project_id"]) or {}
+        for ref in cja_api.extract_entity_references(definition):
+            if not ref["id"] or ref["type"] in _NON_COMPONENT_TYPES:
+                continue
+            entry = usage.setdefault(ref["id"], {"name": ref["name"], "type": ref["type"], "projects": []})
+            if p["name"] not in entry["projects"]:
+                entry["projects"].append(p["name"])
+    return usage
+
+
 def fetch_schemas(sandbox: str | None = None) -> list[dict[str, Any]]:
     if settings.mock_mode:
         raw = mock.MOCK_SCHEMAS

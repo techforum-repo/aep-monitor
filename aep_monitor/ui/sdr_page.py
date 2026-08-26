@@ -38,6 +38,7 @@ def _render_cja_section() -> None:
     if refresh_button("Refresh data views", key="sdr_dataviews_refresh"):
         _do_refresh_dataviews()
         st.session_state["sdr_components_cache"] = {}
+        st.session_state["sdr_component_usage_cache"] = {}
     if st.session_state.get("sdr_dataviews") is None:
         _do_refresh_dataviews()
 
@@ -80,9 +81,9 @@ def _render_cja_section() -> None:
         render_friendly_error(entry["error"], key="sdr_components_retry", context=f"Fetching components for {names_by_id[selected_id]}")
         return
 
-    tab_dims, tab_metrics, tab_calc_metrics = st.tabs([
+    tab_dims, tab_metrics, tab_calc_metrics, tab_usage = st.tabs([
         f"Dimensions ({len(entry['dimensions'])})", f"Metrics ({len(entry['metrics'])})",
-        f"Calculated Metrics ({len(entry['calculated_metrics'])})",
+        f"Calculated Metrics ({len(entry['calculated_metrics'])})", "Component Usage",
     ])
     with tab_dims:
         if entry["dimensions"]:
@@ -114,6 +115,74 @@ def _render_cja_section() -> None:
             st.download_button("Download as CSV", safe_csv(table), f"cja_{selected_id}_calculated_metrics.csv", "text/csv", key="sdr_calc_metrics_csv")
         else:
             st.caption("No calculated metrics.")
+    with tab_usage:
+        _render_component_usage(selected_id, entry)
+
+
+def _render_component_usage(selected_id: str, entry: dict) -> None:
+    st.caption(
+        "Which of this data view's dimensions, metrics, and calculated metrics are actually referenced by a "
+        "CJA Workspace project — not just defined. There's no bulk endpoint for this (one API call per "
+        "project bound to this data view, on top of the list call), so it's opt-in rather than loaded "
+        "automatically with the tabs above."
+    )
+    usage_cache = st.session_state.setdefault("sdr_component_usage_cache", {})
+    if selected_id not in usage_cache:
+        if st.button("Load project usage", key="sdr_load_component_usage"):
+            with st.spinner("Fetching every project bound to this data view..."):
+                try:
+                    usage_cache[selected_id] = {"usage": data.fetch_cja_component_usage(selected_id), "error": None}
+                except Exception as exc:
+                    usage_cache[selected_id] = {"usage": {}, "error": exc}
+            st.rerun()
+        return
+
+    usage_entry = usage_cache[selected_id]
+    if usage_entry["error"] is not None:
+        if render_friendly_error(usage_entry["error"], key="sdr_component_usage_retry", context="Fetching project component usage"):
+            del usage_cache[selected_id]
+            st.rerun()
+        return
+
+    usage = usage_entry["usage"]
+    known = [
+        *[{"id": d["component_id"], "name": d["name"]} for d in entry["dimensions"]],
+        *[{"id": m["component_id"], "name": m["name"]} for m in entry["metrics"]],
+        *[{"id": m["component_id"], "name": m["name"]} for m in entry["calculated_metrics"]],
+    ]
+    if not known:
+        st.caption("No dimensions, metrics, or calculated metrics defined on this data view.")
+        return
+
+    rows = []
+    for component in known:
+        matched = usage.get(component["id"])
+        rows.append({
+            "Name": component["name"],
+            "Used in projects": len(matched["projects"]) if matched else 0,
+            "Projects": ", ".join(matched["projects"]) if matched else "—",
+        })
+    table = pd.DataFrame(rows).sort_values("Used in projects")
+    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.download_button("Download as CSV", safe_csv(table), f"cja_{selected_id}_component_usage.csv", "text/csv", key="sdr_component_usage_csv")
+
+    unused_count = int((table["Used in projects"] == 0).sum())
+    if unused_count:
+        st.caption(f"{unused_count} component(s) defined on this data view but not referenced by any of its bound projects.")
+
+    # A project can reference a component that's since been removed from
+    # (or was never added to) the data view's own component lists above —
+    # a stale/orphaned reference worth surfacing separately, not silently
+    # dropped just because it doesn't match anything in `known`.
+    known_ids = {c["id"] for c in known}
+    stale = [info for component_id, info in usage.items() if component_id not in known_ids]
+    if stale:
+        with st.expander(f"Referenced by a project but not in this data view's current component list ({len(stale)})"):
+            stale_table = pd.DataFrame([
+                {"Name": s["name"], "Type": s["type"], "Projects": ", ".join(s["projects"])}
+                for s in stale
+            ])
+            st.dataframe(stale_table, use_container_width=True, hide_index=True)
 
 
 def _render_aep_section() -> None:

@@ -23,7 +23,7 @@ provisioning to cross-product monitoring.
 | **Data Collection** | Reactor | Extension review status, rule state, every library's build state (not just an assumed "latest" one — see limitations), environment build status (dev/staging/**production**), data element publish state |
 | **CJA** | CJA APIs | Connection status, data views built on each connection |
 | **Compare** | Flow Service + Observability + Schema Registry + Catalog + Reactor + CJA | Five comparison tabs — Sandboxes, Schemas, and Datasets are actual sandbox comparisons; DC Properties and CJA Data Views compare two picked entities instead (both are org-wide). Adobe has no built-in tool for any of these. |
-| **SDR** | CJA Dimensions/Metrics/Calculated Metrics + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), pulled from reality instead of a hand-maintained doc that drifts |
+| **SDR** | CJA Dimensions/Metrics/Calculated Metrics/Projects + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), plus which components are actually referenced by a CJA Workspace project (and which aren't), pulled from reality instead of a hand-maintained doc that drifts |
 | **Audit Log** | Audit Query + Reactor Audit Events + CJA Audit Logs | Who changed what and when, across all three products (best-effort — see below) |
 | **Alerts** | (derived) | Failed runs, rejected extensions, failed builds, unhealthy connections, near-limit quotas — self-clearing, optional Slack push |
 | **Diagnostics** | all clients | Per-product connection test, local SQLite health, log download |
@@ -317,6 +317,45 @@ once per alert, not on every subsequent poll while it's still open.
   isn't implemented (the documented mechanism for it, a separate `v2`
   `Accept` header, isn't confirmed) — a sandbox with 300+ label descriptors
   specifically could miss some.
+- **SDR's Component Usage tab** (`list_projects()`/`get_project()`/
+  `extract_entity_references()` in `clients/cja.py`) shows which
+  dimensions/metrics/calculated metrics on a data view are actually
+  referenced by a CJA Workspace project — and, by omission, which aren't.
+  Confirmed live: `GET https://cja.adobe.io/projects` (list) returns a
+  **bare JSON array**, not the `{"content": [...]}` envelope every other
+  CJA list endpoint uses, and has no `lastPage`/`totalElements` to page on
+  — this app stops paging when a page comes back with fewer items than
+  requested instead. `expansion=definition` only populates a project's
+  `definition` on the single-project `GET .../projects/{id}` call, not the
+  list call, despite Adobe's docs describing it as available on both.
+  Every referenced component (a date range, the data view itself, and —
+  expected but not confirmed from a populated example — dimensions/
+  metrics/calculated metrics/segments) is tagged `__entity__: true`
+  wherever it sits in the deeply nested panel/subPanel/reportlet tree;
+  this app walks the whole tree recursively rather than assuming a fixed
+  path, since that path likely varies by visualization type (Freeform vs.
+  Trended vs. Cohort, etc.) and only a Freeform panel was seen.
+
+  Matching a project's referenced components back to the data view's own
+  dimensions/metrics/calculated metrics is done by **id** (against the
+  already-confirmed Dimensions/Metrics/Calculated Metrics endpoints), not
+  by an entity's `type` string — so the unconfirmed exact `type` spelling
+  for a Dimension/Metric/CalculatedMetric reference (only an empty test
+  project was available, which had none to check against) isn't a
+  correctness risk for the usage counts themselves; a `type` this app
+  doesn't recognize just means that reference's *label* in the "referenced
+  but not in this data view's current component list" section shows
+  whatever Adobe actually returned, verbatim, rather than the count being
+  wrong. `type` is only load-bearing for the two confirmed exclusions —
+  `"ReportSuite"`/`"DateRange"` (panel framing, not a shared component) —
+  and if some other framing-only entity type exists that this app hasn't
+  seen, worst case it shows up in that "not in current component list"
+  section rather than corrupting a real component's count. This is also,
+  deliberately, the only SDR tab that isn't auto-fetched — building the
+  usage map costs one API call per project bound to the selected data
+  view (no bulk "definitions for every project" endpoint exists), so it's
+  gated behind an explicit "Load project usage" button rather than loaded
+  with the other three tabs.
 - **Flow Service** response field names (`recordSummary`, `statusSummary`,
   ...) come from Adobe's published docs but are known to vary slightly by
   source type. Parsing is defensive (`.get()` with fallbacks) and every

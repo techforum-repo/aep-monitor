@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Calculated Metrics is a third genuinely separate CJA namespace (also
     # not under /data) — confirmed via Adobe's own endpoint docs.
     cja_calculatedmetrics_base_url: str = "https://cja.adobe.io/calculatedmetrics"
+    # Projects is a fourth genuinely separate CJA namespace (also not under
+    # /data) — confirmed via Adobe's own endpoint docs and a live response.
+    cja_projects_base_url: str = "https://cja.adobe.io/projects"
     aep_schema_registry_base_url: str = "https://platform.adobe.io/data/foundation/schemaregistry"
     aep_catalog_base_url: str = "https://platform.adobe.io/data/foundation/catalog"
 
