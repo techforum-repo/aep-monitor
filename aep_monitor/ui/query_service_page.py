@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from .. import data, database
+from ..config import settings
 from ..poller import refresh_query_service
 from ..utils import safe_csv
 from .shared import format_timestamp, get_active_sandbox, mark_cache_sandbox, refresh_button, render_friendly_error, sandbox_changed_since_cache, status_pill
@@ -48,6 +49,14 @@ def render() -> None:
     queries = st.session_state.query_rows or []
     schedules = st.session_state.query_schedule_rows or []
     st.caption(f"Last refreshed {format_timestamp(database.latest_checked_at('Query Service'))}")
+    st.caption(
+        f"\"Run by\" resolves via a separate Adobe User Management API call, cached "
+        f"{settings.user_directory_cache_hours:.0f}h at a time (directory last refreshed "
+        f"{format_timestamp(database.user_directory_fetched_at())}) — that API's own rate limit (25 req/min) is "
+        "the strictest of any API this app talks to, so it's deliberately not refreshed on every click here. "
+        "An id shown as \"(unresolved)\" is expected, not necessarily broken, for a query run by a technical/"
+        "service account rather than a person — see README Known Limitations."
+    )
 
     st.markdown("#### Recent queries")
     if not queries:
@@ -66,7 +75,7 @@ def render() -> None:
                 "Query": q["name"],
                 "State": status_pill(q["state"]),
                 "Client": q["client_type"] or "—",
-                "User": q["user_id"] or "—",
+                "Run by": q["user_display_name"],
                 "DB": q["db_name"] or "—",
                 "Scheduled": "Yes" if q["is_scheduled"] else "No",
                 "Rows": q.get("row_count"),
@@ -90,7 +99,7 @@ def render() -> None:
             st.caption("No SQL text returned for this query.")
         detail_cols = st.columns(3)
         detail_cols[0].caption(f"Database: **{selected['db_name'] or '—'}**")
-        detail_cols[1].caption(f"Run by: **{selected['user_id'] or '—'}**")
+        detail_cols[1].caption(f"Run by: **{selected['user_display_name']}**")
         detail_cols[2].caption(f"Updated: **{format_timestamp(selected['updated_at'])}**")
         if selected["referenced_dataset_ids"]:
             st.caption("Referenced datasets (raw ids, not resolved to names): " + ", ".join(selected["referenced_dataset_ids"]))

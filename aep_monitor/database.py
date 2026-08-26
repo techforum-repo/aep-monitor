@@ -92,6 +92,14 @@ def initialize() -> None:
           state TEXT NOT NULL DEFAULT ''
         )""")
         conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_directory_cache (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          fetched_at TEXT NOT NULL,
+          user_id TEXT NOT NULL DEFAULT '',
+          email TEXT NOT NULL DEFAULT '',
+          display_name TEXT NOT NULL DEFAULT ''
+        )""")
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS entity_snapshots (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           entity_type TEXT NOT NULL,
@@ -222,6 +230,40 @@ def record_query_snapshots(rows: list[dict[str, Any]]) -> None:
             [(checked_at, r["query_id"], r.get("name", ""), r["state"]) for r in rows],
         )
         conn.commit()
+
+
+def replace_user_directory(rows: list[dict[str, Any]]) -> None:
+    """Full replace, not an accumulating history — unlike every other table
+    in this file, the org's user directory is a point-in-time snapshot
+    with no meaningful "over time" trend, and User Management API's own
+    strict rate limit (see clients/user_management.py — 25 req/min per
+    client, 100/min org-wide) means this should only be called when the
+    cache is actually stale (see data.py's fetch_user_display_names()),
+    never on every ordinary refresh the way every other snapshot table
+    here is."""
+    fetched_at = _now()
+    with _connect() as conn:
+        conn.execute("DELETE FROM user_directory_cache")
+        conn.executemany(
+            "INSERT INTO user_directory_cache(fetched_at,user_id,email,display_name) VALUES(?,?,?,?)",
+            [(fetched_at, r.get("user_id", ""), r.get("email", ""), r.get("display_name", "")) for r in rows],
+        )
+        conn.commit()
+
+
+def read_user_directory() -> list[dict[str, str]]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT user_id, email, display_name FROM user_directory_cache").fetchall()
+    return [{"user_id": row["user_id"], "email": row["email"], "display_name": row["display_name"]} for row in rows]
+
+
+def user_directory_fetched_at() -> str | None:
+    """None before the directory has ever been fetched — distinguishes
+    "never fetched" from "fetched a long time ago" the same way
+    latest_checked_at() does for every other product."""
+    with _connect() as conn:
+        row = conn.execute("SELECT fetched_at FROM user_directory_cache ORDER BY id DESC LIMIT 1").fetchone()
+    return row[0] if row else None
 
 
 def read_aep_history(flow_id: str | None = None, limit: int = 500) -> pd.DataFrame:
@@ -447,7 +489,7 @@ def sqlite_health() -> dict[str, Any]:
 def table_counts() -> dict[str, int]:
     tables = [
         "aep_flow_snapshots", "dc_property_snapshots", "cja_connection_snapshots", "quota_snapshots",
-        "segment_job_snapshots", "query_snapshots", "entity_snapshots", "alerts", "app_settings",
+        "segment_job_snapshots", "query_snapshots", "user_directory_cache", "entity_snapshots", "alerts", "app_settings",
     ]
     with _connect() as conn:
         existing = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}

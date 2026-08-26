@@ -14,6 +14,7 @@ from ..clients import (
     reactor_client,
     schema_registry_client,
     segmentation_client,
+    user_management_client,
 )
 from ..config import settings
 from ..logging_setup import LOG_PATH
@@ -25,6 +26,10 @@ _CLIENTS = {
     "CJA": ("CJA", cja_client),
     "Segmentation Service": ("Segmentation", segmentation_client),
     "Query Service": ("Query Service", query_service_client),
+    # A test here uses the same strict rate-limited call list_users() itself
+    # makes (see clients/user_management.py) — harmless as an occasional
+    # manual click, but not something this page loops or auto-retries.
+    "User Management (for Query Service's \"Run by\")": ("User Management", user_management_client),
     "Audit Query": ("Audit", audit_client),
     "Observability Insights": ("Observability", observability_client),
     "Data Lifecycle Quota": ("Quota", quota_client),

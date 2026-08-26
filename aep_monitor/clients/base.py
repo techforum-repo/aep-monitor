@@ -35,12 +35,20 @@ class RequestPacer:
     poll and a CJA poll on different credentials shouldn't wait on each
     other."""
 
-    def __init__(self) -> None:
+    def __init__(self, requests_per_second: float | None = None) -> None:
+        """`requests_per_second=None` (every client except User Management —
+        see clients/user_management.py) paces against the shared
+        `settings.requests_per_second`, re-read on every call so a
+        Settings-page-driven change applies immediately without a restart.
+        A fixed value overrides that shared default for this client only —
+        for a client whose own documented rate limit is nothing like the
+        rest of this app's, a single global setting can't express both."""
         self._lock = threading.Lock()
         self._next_allowed_at = 0.0
+        self._fixed_rps = requests_per_second
 
     def wait(self) -> None:
-        rps = settings.requests_per_second
+        rps = self._fixed_rps if self._fixed_rps is not None else settings.requests_per_second
         if rps <= 0:
             return
         min_interval = 1.0 / rps
@@ -57,13 +65,18 @@ class BaseAdobeClient:
     """Not instantiated directly — see aep.py/reactor.py/cja.py/audit.py."""
 
     base_url: str = ""
+    # Override in a subclass to pace that client independently of the
+    # shared settings.requests_per_second default — see
+    # clients/user_management.py, whose documented rate limit (25 req/min)
+    # is far stricter than every other API this app talks to.
+    requests_per_second_override: float | None = None
 
     def __init__(self, client_id: str, client_secret: str, scopes: str, org_id: str) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._scopes = scopes
         self._org_id = org_id
-        self._pacer = RequestPacer()
+        self._pacer = RequestPacer(requests_per_second=self.requests_per_second_override)
 
     def _new_http_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=settings.http_timeout, trust_env=True)

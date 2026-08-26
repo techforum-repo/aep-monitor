@@ -7,6 +7,7 @@ parse_*() functions as live data (see clients/mock.py), so this is the only
 place the two paths diverge.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
 from . import database, diffing
@@ -21,6 +22,7 @@ from .clients import (
     reactor_client,
     schema_registry_client,
     segmentation_client,
+    user_management_client,
 )
 from .clients import aep as aep_api
 from .clients import audit as audit_api
@@ -33,7 +35,9 @@ from .clients import quota as quota_api
 from .clients import reactor as reactor_api
 from .clients import schema_registry as schema_registry_api
 from .clients import segmentation as segmentation_api
+from .clients import user_management as user_management_api
 from .config import settings
+from .logging_setup import get_logger
 from .utils import run_async
 
 
@@ -468,7 +472,55 @@ def fetch_queries(sandbox: str | None = None) -> list[dict[str, Any]]:
             async with query_service_client._new_http_client() as http:  # noqa: SLF001
                 return await query_service_client.list_queries(http, sandbox=sandbox)
         raw = run_async(_load())
-    return [query_service_api.parse_query(item) for item in raw]
+    rows = [query_service_api.parse_query(item) for item in raw]
+    display_names = fetch_user_display_names()
+    for row in rows:
+        row["user_display_name"] = display_names.get(row["user_id"]) or (f"{row['user_id']} (unresolved)" if row["user_id"] else "—")
+    return rows
+
+
+def fetch_user_display_names() -> dict[str, str]:
+    """{user_id: display_name} — resolves Query Service's opaque `userId`
+    via a separate Adobe User Management API call, since Query Service's
+    own API has no built-in resolution for this (confirmed via Adobe's
+    docs — see clients/user_management.py's module docstring).
+
+    Deliberately does NOT refetch on every call the way every other
+    resolver in this app does (e.g. fetch_schema_titles()) — User
+    Management API's own rate limit (25 req/min per client) is the
+    strictest of any API this app talks to, and an org's user directory
+    changes rarely, so the result is cached in aep_monitor.db and only
+    refetched once settings.user_directory_cache_hours has passed (see
+    database.replace_user_directory()/user_directory_fetched_at()).
+
+    A fetch failure here (a real, expected case — see README: this needs a
+    separate Developer Console API grant most setups won't have added yet)
+    is caught and logged rather than propagated, so a missing/unconfigured
+    grant degrades to "every userId stays unresolved" instead of breaking
+    Query Service's own page."""
+    cached_at = database.user_directory_fetched_at()
+    is_stale = True
+    if cached_at:
+        try:
+            age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(cached_at)).total_seconds() / 3600
+            is_stale = age_hours >= settings.user_directory_cache_hours
+        except ValueError:
+            is_stale = True
+
+    if is_stale:
+        try:
+            if settings.mock_mode:
+                raw = mock.MOCK_USERS
+            else:
+                async def _load():
+                    async with user_management_client._new_http_client() as http:  # noqa: SLF001
+                        return await user_management_client.list_users(http)
+                raw = run_async(_load())
+            database.replace_user_directory([user_management_api.parse_user(item) for item in raw])
+        except Exception:
+            get_logger().warning("User directory refresh failed — Query Service's userId will show unresolved", exc_info=True)
+
+    return {u["user_id"]: u["display_name"] for u in database.read_user_directory() if u["user_id"] and u["display_name"]}
 
 
 def fetch_query_schedules(sandbox: str | None = None) -> list[dict[str, Any]]:

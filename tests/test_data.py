@@ -4,7 +4,10 @@ from __future__ import annotations
 test_compare_diffs.py for those) and aren't covered by a more specific
 test file. Run against mock data (settings.mock_mode defaults True)."""
 
-from aep_monitor import data
+from datetime import datetime, timedelta, timezone
+
+from aep_monitor import data, database
+from aep_monitor.clients import mock as mock_module
 
 
 def test_fetch_schema_titles_maps_schema_id_to_title():
@@ -134,14 +137,17 @@ def test_fetch_segment_jobs_resolves_segment_name_from_segment_id():
     assert by_id["job-2"]["is_bad"] is True
 
 
-def test_fetch_queries_returns_parsed_rows():
+def test_fetch_queries_returns_parsed_rows(temp_db):
+    # temp_db: fetch_queries() now also resolves "Run by" via
+    # fetch_user_display_names(), which reads/writes the user directory
+    # cache table.
     queries = data.fetch_queries()
     by_id = {q["query_id"]: q for q in queries}
     assert by_id["q-1"]["is_bad"] is False
     assert by_id["q-2"]["is_bad"] is True
 
 
-def test_fetch_queries_includes_sql_text_and_client_type():
+def test_fetch_queries_includes_sql_text_and_client_type(temp_db):
     """The actual query detail — dropped entirely until this was added
     (and initially still broken live, since sql lives under `request.sql`,
     not top-level — see query_service_page.py's "Query detail" section and
@@ -157,3 +163,61 @@ def test_fetch_query_schedules_returns_parsed_rows():
     schedules = data.fetch_query_schedules()
     assert schedules[0]["enabled"] is True
     assert schedules[0]["name"] == "Daily loyalty rollup"
+
+
+def test_fetch_user_display_names_resolves_mock_users(temp_db):
+    names = data.fetch_user_display_names()
+    assert names["u-jordan-lee"] == "Jordan Lee"
+
+
+def test_fetch_queries_resolves_run_by_and_flags_a_technical_account_as_unresolved(temp_db):
+    """"acp-scheduler" (q-1's userId) has no matching MOCK_USERS entry — a
+    technical/service account genuinely may not appear in the org
+    directory (see clients/user_management.py) — must show flagged as
+    unresolved, not blend in as if it were a real name."""
+    queries = data.fetch_queries()
+    by_id = {q["query_id"]: q for q in queries}
+    assert by_id["q-2"]["user_display_name"] == "Jordan Lee"
+    assert "unresolved" in by_id["q-1"]["user_display_name"]
+
+
+def test_fetch_user_display_names_does_not_refetch_while_the_cache_is_fresh(temp_db, monkeypatch):
+    """The core reason this cache exists at all: User Management API's own
+    rate limit (25 req/min) is the strictest of any API this app talks
+    to — refetching on every call the way every other resolver does would
+    risk it for no benefit, since the org directory rarely changes."""
+    data.fetch_user_display_names()  # first call: populates the cache
+    monkeypatch.setattr(mock_module, "MOCK_USERS", [{"id": "u-jordan-lee", "email": "x", "firstname": "Changed", "lastname": "Name"}])
+
+    names = data.fetch_user_display_names()  # cache is still fresh -> must not have refetched
+
+    assert names["u-jordan-lee"] == "Jordan Lee"  # the original value, not "Changed Name"
+
+
+def test_fetch_user_display_names_refetches_once_the_cache_goes_stale(temp_db, monkeypatch):
+    old_fetch_time = (datetime.now(timezone.utc) - timedelta(hours=999)).isoformat()
+    monkeypatch.setattr(database, "_now", lambda: old_fetch_time)
+    data.fetch_user_display_names()  # populates the cache, stamped as old
+
+    monkeypatch.setattr(database, "_now", lambda: datetime.now(timezone.utc).isoformat())
+    monkeypatch.setattr(mock_module, "MOCK_USERS", [{"id": "u-jordan-lee", "email": "x", "firstname": "Changed", "lastname": "Name"}])
+
+    names = data.fetch_user_display_names()  # cache is now stale (999h > default 12h) -> must refetch
+
+    assert names["u-jordan-lee"] == "Changed Name"
+
+
+def test_fetch_user_display_names_degrades_to_empty_on_a_fetch_failure_instead_of_raising(temp_db, monkeypatch):
+    """A missing/unconfigured User Management API grant is a real, expected
+    case (see README) — it must degrade every userId to unresolved, not
+    break Query Service's own page."""
+    def _boom(rows):
+        raise RuntimeError("403 Forbidden — User Management API not granted")
+
+    monkeypatch.setattr(database, "replace_user_directory", _boom)
+
+    names = data.fetch_user_display_names()  # must not raise
+
+    assert names == {}
+
+

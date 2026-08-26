@@ -526,12 +526,29 @@ MOCK_QUERIES: list[dict[str, Any]] = [
         "id": "q-2", "state": "FAILED",
         "request": {"dbName": "prod:all", "sql": "SELECT * FROM web_events w JOIN loyalty_events l ON w._acmecorp.loyaltyId = l._acmecorp.loyaltyId;"},
         "client": "Adobe Query Service UI", "errors": [{"code": "0A500", "message": "Query exceeded configured timeout"}],
-        "rowCount": None, "elapsedTime": 601_000, "created": _iso(180), "updated": _iso(170), "userId": "jordan.lee@acme.com",
+        # An opaque id, not an email — matches one of MOCK_USERS below so
+        # the "Run by" resolution has something real to demonstrate.
+        # "q-1"'s "acp-scheduler" deliberately has no match anywhere: a
+        # technical/service account very plausibly has no User Management
+        # API directory entry at all (see clients/user_management.py's
+        # module docstring) — an unresolved id there is the *expected*
+        # outcome, not a bug, and mock mode should show that honestly too.
+        "rowCount": None, "elapsedTime": 601_000, "created": _iso(180), "updated": _iso(170), "userId": "u-jordan-lee",
     },
 ]
 
 MOCK_SCHEDULES: list[dict[str, Any]] = [
     {"id": "sch-1", "state": "ENABLED", "query": {"name": "Daily loyalty rollup"}},
+]
+
+# --- User Management API (org directory, for Query Service's "Run by") ---------
+# Shaped like Adobe's own published example response (confirmed live — see
+# clients/user_management.py's module docstring): "id" is the org-scoped
+# user id, "firstname"/"lastname" build the display name, matching
+# parse_user()'s own preference order.
+MOCK_USERS: list[dict[str, Any]] = [
+    {"id": "u-jordan-lee", "email": "jordan.lee@acme.com", "username": "jordan.lee", "firstname": "Jordan", "lastname": "Lee", "type": "federatedID"},
+    {"id": "u-priya-shah", "email": "priya.shah@acme.com", "username": "priya.shah", "firstname": "Priya", "lastname": "Shah", "type": "federatedID"},
 ]
 
 

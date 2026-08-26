@@ -79,6 +79,28 @@ class Settings(BaseSettings):
     # Query Service — see clients/query_service.py for the same
     # not-confirmed-live caveat as Segmentation above.
     aep_query_service_base_url: str = "https://platform.adobe.io/data/foundation/query"
+    # Adobe User Management API — a genuinely separate Adobe API product
+    # (not part of AEP/Data Collection/CJA) used only to resolve Query
+    # Service's opaque "userId" to a display name, since Query Service's
+    # own API has no built-in resolution for this (confirmed via Adobe's
+    # docs — see README "Going live" for the extra Developer Console step
+    # this needs, and Known Limitations for the rate limit below).
+    user_management_base_url: str = "https://usermanagement.adobe.io/v2/usermanagement"
+    # Confirmed via Adobe's own published docs: 25 requests/minute per
+    # client, plus a separate 100/minute cap shared across every client in
+    # the org — the strictest rate limit of any API this app talks to, by a
+    # wide margin (CJA/Analytics, the next strictest referenced on the
+    # Settings page, is 20,000 calls/hour). Set well under the per-client
+    # limit; this app has no way to coordinate with the separate org-wide
+    # cap if other tools share the same org.
+    user_management_requests_per_second: float = 0.35  # ~21/min
+    # The org's user directory changes rarely — re-fetching it on every
+    # "Refresh from Adobe" click on the Query Service page would burn
+    # meaningfully into the strict limit above for almost no benefit.
+    # Cached in aep_monitor.db (see database.replace_user_directory()) and
+    # only refetched once this many hours have passed, independent of how
+    # often Query Service's own data is refreshed.
+    user_directory_cache_hours: float = 12.0
 
     http_timeout: float = 30.0
     # Adobe doesn't publish one shared per-product rate limit; this is a

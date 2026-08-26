@@ -17,6 +17,7 @@ from .quota import QuotaClient
 from .reactor import ReactorClient
 from .schema_registry import SchemaRegistryClient
 from .segmentation import SegmentationClient
+from .user_management import UserManagementClient
 
 _credentials = (settings.adobe_client_id, settings.adobe_client_secret, settings.adobe_scopes, settings.adobe_org_id)
 
@@ -30,3 +31,4 @@ schema_registry_client = SchemaRegistryClient(*_credentials)
 catalog_client = CatalogClient(*_credentials)
 segmentation_client = SegmentationClient(*_credentials)
 query_service_client = QueryServiceClient(*_credentials)
+user_management_client = UserManagementClient(*_credentials)

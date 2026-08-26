@@ -116,6 +116,35 @@ def test_query_service_client_sends_sandbox_name_header(monkeypatch):
     assert headers["x-sandbox-name"] == "prod"
 
 
+def test_user_management_client_uses_its_own_stricter_pace_not_the_shared_default(monkeypatch):
+    """User Management API's documented rate limit (25 req/min) is far
+    stricter than every other client's shared settings.requests_per_second
+    default — this pins that its pacer actually uses the fixed override,
+    not the global setting, by checking the pacer's own resolved rate
+    rather than timing real sleeps (slow and flaky)."""
+    from aep_monitor.clients.user_management import UserManagementClient
+    from aep_monitor.config import settings
+
+    monkeypatch.setattr(settings, "requests_per_second", 5.0)  # the shared default every other client uses
+    client = UserManagementClient("cid", "secret", "scope", "org")
+
+    assert client._pacer._fixed_rps == settings.user_management_requests_per_second
+    assert client._pacer._fixed_rps != settings.requests_per_second
+
+
+def test_a_client_without_an_override_still_uses_the_shared_setting(monkeypatch):
+    """Regression guard for the pacer refactor itself: every existing
+    client (e.g. AEP) must be unaffected by adding the override mechanism —
+    None means "read settings.requests_per_second live," same as before."""
+    from aep_monitor.clients.aep import AEPClient
+    from aep_monitor.config import settings
+
+    monkeypatch.setattr(settings, "requests_per_second", 7.0)
+    client = AEPClient("cid", "secret", "scope", "org")
+
+    assert client._pacer._fixed_rps is None
+
+
 def test_segmentation_client_sends_the_confirmed_sort_syntax_for_segment_jobs(monkeypatch):
     """Regression for a real live bug: the original `sort` value was
     "desc:createdAt" (order and attribute name both backwards) — Adobe
@@ -137,6 +166,50 @@ def test_segmentation_client_sends_the_confirmed_sort_syntax_for_segment_jobs(mo
 
     assert captured["path"] == "/segment/jobs"
     assert captured["kwargs"]["params"]["sort"] == "creationTime:desc"
+
+
+def test_user_management_client_requests_the_confirmed_paginated_endpoint(monkeypatch):
+    """Confirmed live via Adobe's own docs: GET /users/{orgId}/{page},
+    zero-indexed, stopping once the response says lastPage=true."""
+    from aep_monitor.clients.user_management import UserManagementClient
+
+    captured_paths: list[str] = []
+
+    async def _fake_get(self, http, path, extra_headers=None, **kwargs):
+        captured_paths.append(path)
+        if len(captured_paths) == 1:
+            return {"lastPage": False, "result": "success", "users": [{"id": "u1"}]}
+        return {"lastPage": True, "result": "success", "users": [{"id": "u2"}]}
+
+    monkeypatch.setattr(UserManagementClient, "get", _fake_get)
+    client = UserManagementClient("cid", "secret", "scope", "my-org")
+
+    users = asyncio.run(client.list_users(http=None))
+
+    assert captured_paths == ["/users/my-org/0", "/users/my-org/1"]
+    assert [u["id"] for u in users] == ["u1", "u2"]
+
+
+def test_user_management_client_stops_at_the_page_cap_even_if_lastpage_is_never_true(monkeypatch):
+    """Bounds worst-case rate-limit usage in one refresh — see
+    clients/user_management.py's _MAX_PAGES."""
+    from aep_monitor.clients import user_management as um_module
+    from aep_monitor.clients.user_management import UserManagementClient
+
+    call_count = 0
+
+    async def _fake_get(self, http, path, extra_headers=None, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {"lastPage": False, "result": "success", "users": []}
+
+    monkeypatch.setattr(UserManagementClient, "get", _fake_get)
+    monkeypatch.setattr(um_module, "_MAX_PAGES", 3)
+    client = UserManagementClient("cid", "secret", "scope", "my-org")
+
+    asyncio.run(client.list_users(http=None))
+
+    assert call_count == 3
 
 
 def test_schema_registry_client_requests_label_descriptors_with_the_confirmed_filter(monkeypatch):

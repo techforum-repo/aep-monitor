@@ -92,6 +92,22 @@ def test_latest_checked_at_covers_quota(temp_db):
     assert database.latest_checked_at("Quota") is not None
 
 
+def test_user_directory_round_trips_and_fully_replaces_not_accumulates(temp_db):
+    """Unlike every other snapshot table, the user directory is a
+    point-in-time cache — a second replace must supersede the first, not
+    append to it (see replace_user_directory()'s docstring)."""
+    assert database.user_directory_fetched_at() is None
+    assert database.read_user_directory() == []
+
+    database.replace_user_directory([{"user_id": "u1", "email": "a@x.com", "display_name": "A"}])
+    assert database.user_directory_fetched_at() is not None
+    assert database.read_user_directory() == [{"user_id": "u1", "email": "a@x.com", "display_name": "A"}]
+
+    database.replace_user_directory([{"user_id": "u2", "email": "b@x.com", "display_name": "B"}])
+    directory = database.read_user_directory()
+    assert directory == [{"user_id": "u2", "email": "b@x.com", "display_name": "B"}]  # u1 is gone, not still present
+
+
 def test_latest_checked_at_is_none_before_any_snapshot(temp_db):
     assert database.latest_checked_at("AEP") is None
     database.record_aep_snapshots([{"flow_id": "f1", "flow_name": "x", "status": "success", "records_in": 1, "records_out": 1, "records_failed": 0}])

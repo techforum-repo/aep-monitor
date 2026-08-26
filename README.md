@@ -23,7 +23,7 @@ provisioning to cross-product monitoring.
 | **Data Collection** | Reactor | Extension review status, rule state, every library's build state (not just an assumed "latest" one — see limitations), environment build status (dev/staging/**production**), data element publish state |
 | **CJA** | CJA APIs | Connection status, data views built on each connection, and Workspace projects built on those data views |
 | **Segments** | Segmentation Service (Unified Profile) | Segment definitions and recent segment evaluation jobs — the layer between ingestion and activation that was previously unwatched; a failed job here is very often the real cause of "the audience never reached the destination" (see Known Limitations — newest, least-verified integration) |
-| **Query Service** | Query Service | Recent ad-hoc/scheduled queries against the data lake — status, row count, elapsed time, and the actual SQL text per query (a "Query detail" picker, not a table column) — plus which queries are on a schedule (see Known Limitations — same caveat as Segments) |
+| **Query Service** | Query Service + User Management API (optional) | Recent ad-hoc/scheduled queries against the data lake — status, row count, elapsed time, and the actual SQL text per query (a "Query detail" picker, not a table column), who ran it (**"Run by"**, resolved to a name via a separate, optional User Management API call — see Known Limitations) — plus which queries are on a schedule |
 | **Compare** | Flow Service + Observability + Schema Registry + Catalog + Reactor + CJA | Five comparison tabs — Sandboxes, Schemas, and Datasets are actual sandbox comparisons; DC Properties and CJA Data Views compare two picked entities instead (both are org-wide). Adobe has no built-in tool for any of these. |
 | **SDR** | CJA Dimensions/Metrics/Calculated Metrics/Projects + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), plus which components are actually referenced by a CJA Workspace project (and which aren't), pulled from reality instead of a hand-maintained doc that drifts |
 | **Audit Log** | Audit Query + Reactor Audit Events + CJA Audit Logs | Who changed what and when, across all three products (best-effort — see below) |
@@ -152,13 +152,30 @@ One Adobe I/O credential covers every product this app talks to.
 
 1. In [Adobe Developer Console](https://developer.adobe.com/console),
    create **one** project and add all three: **Experience Platform API**
-   (AEP / Audit Query / Observability / Quota), **Experience Platform
-   Launch API** (Data Collection), and **Customer Journey Analytics API**
-   (CJA). Choose **OAuth Server-to-Server** and select a product profile
-   with access to each.
+   (AEP Flow Service / Audit Query / Observability / Quota / Catalog /
+   Schema Registry / **Segmentation Service** / **Query Service** — all of
+   this app's AEP-family integrations live under this one API product,
+   not separate ones), **Experience Platform Launch API** (Data
+   Collection), and **Customer Journey Analytics API** (CJA). Choose
+   **OAuth Server-to-Server** and select a product profile with access to
+   each.
+   - **Optional, separate API**: add **User Management API** too if you
+     want Query Service's "Run by" column resolved to a name instead of
+     an opaque id (see Known Limitations) — this is a genuinely different
+     Adobe API product from the three above, not bundled into any of
+     them, and skipping it just leaves "Run by" showing `(unresolved)`
+     rather than breaking anything else. Adding it may also need the
+     technical account granted an explicit org-level role in [Adobe Admin
+     Console](https://adminconsole.adobe.com) beyond ordinary product
+     profile membership — **not confirmed live** the way CJA's
+     product-administration requirement below is; check what Developer
+     Console/Admin Console actually asks for when you add it, and see
+     Known Limitations for this integration's own strict rate limit
+     before turning it on for a large org.
 2. Fill in `.env` — `ADOBE_ORG_ID`, `ADOBE_CLIENT_ID`, `ADOBE_CLIENT_SECRET`,
    and `ADOBE_SCOPES` (the combined scope string the console shows once
-   all three APIs are added) — and set `MOCK_MODE=false`.
+   every API you added is added — this grows if you added User Management
+   API too) — and set `MOCK_MODE=false`.
 3. Restart the app. Use the **Diagnostics** page to test each product's
    connection individually.
 
@@ -313,6 +330,52 @@ once per alert, not on every subsequent poll while it's still open.
 
   Both clients send `x-sandbox-name` defensively (same reasoning as
   Quota/Audit Query below).
+
+- **User Management API** (`clients/user_management.py`) resolves Query
+  Service's opaque `userId` to a display name for the "Run by" column —
+  added because Query Service's own API has no CJA-style `expansion`
+  parameter to do this itself (confirmed via Adobe's docs: the complete
+  documented parameter list for `GET /queries` is `orderby`, `limit`,
+  `start`, `property`, `excludeSoftDeleted`, `excludeHidden`, `isPrevLink`
+  — no expansion/properties/fields option exists, and `userId` is the only
+  user-identifying field documented on a query object at all). Confirmed
+  live via Adobe's own published docs: base URL
+  `usermanagement.adobe.io/v2/usermanagement`, endpoint `GET
+  /users/{orgId}/{page}` (zero-indexed, paginated via a `lastPage`
+  boolean), user object fields `id`/`email`/`username`/`firstname`/
+  `lastname`/`type`/`domain`/`country`.
+
+  **Not confirmed**: whether a user's `id` in this API is actually the
+  same identifier Query Service's `userId` returns — these are two
+  separate Adobe systems with no documented guarantee their id spaces
+  line up, unlike CJA's `expansion=ownerFullName` (which resolves an id
+  *within the same API* that produced it). If "Run by" stays unresolved
+  for every query on your tenant even after adding this API, a mismatched
+  id space — not a broken integration — is the first thing to check via
+  the Diagnostics page's raw connection test. Also expected, not a bug:
+  Adobe's own docs mark `id` "optional if unpopulated," and a technical/
+  service account (like the one this app's own credential authenticates
+  as) very plausibly has no directory entry at all — an unresolved id on
+  a scheduled/API-run query is normal, not a resolution failure.
+
+  **Rate limit — confirmed via Adobe's own docs, the strictest of any API
+  this app talks to by a wide margin**: 25 requests/minute per client,
+  plus a separate 100/minute cap shared across every client in the org
+  (this app has no way to protect that shared cap if other tools use the
+  same org). Unlike every other client in this app, User Management API's
+  `RequestPacer` is fixed at its own `USER_MANAGEMENT_REQUESTS_PER_SECOND`
+  (default ~21/min) instead of sharing the global `REQUESTS_PER_SECOND`
+  every other client uses — see `clients/base.py`'s `RequestPacer`/
+  `BaseAdobeClient.requests_per_second_override`.
+  The resolved directory is also cached in `aep_monitor.db`
+  (`database.replace_user_directory()`) and only refetched once
+  `USER_DIRECTORY_CACHE_HOURS` (default 12h) has passed — independent of
+  how often the Query Service page itself is refreshed, since Adobe's own
+  guidance recommends syncing this API hourly at the fastest. A directory
+  refresh failure (e.g. the API product hasn't been added yet, or the
+  technical account lacks the org-level role it needs) is caught and
+  logged rather than propagated — every `userId` just stays unresolved,
+  Query Service's own page keeps working either way.
 
 - **`refresh_all()` now isolates each of its six legs' failures
   independently** (`poller.py`) — found via the Segmentation bug above,
@@ -659,7 +722,8 @@ aep_monitor/
     cja.py, audit.py,
     observability.py, quota.py,
     segmentation.py,
-    query_service.py
+    query_service.py,
+    user_management.py
     mock.py                    Sample data, shaped like raw API responses
   ui/                        One module per Streamlit page
 tests/                     pytest — business logic (unit) + tests/test_app_pages.py (Streamlit AppTest)

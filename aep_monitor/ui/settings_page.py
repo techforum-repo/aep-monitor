@@ -44,11 +44,19 @@ def render() -> None:
     st.write("Slack webhook: " + ("✅ configured" if settings.slack_webhook_url else "not set — alerts only show in-app"))
 
     st.markdown("#### Networking")
-    st.write(f"Requests/sec per client: **{settings.requests_per_second}** · HTTP timeout: **{settings.http_timeout}s**")
+    st.write(
+        f"Requests/sec per client (shared default): **{settings.requests_per_second}** · "
+        f"User Management API (its own, stricter pace — see below): **{settings.user_management_requests_per_second}**/s · "
+        f"HTTP timeout: **{settings.http_timeout}s**"
+    )
     st.caption(
         "Adobe's documented (static, not queryable) API rate limits — not something this app monitors live, "
         "shown here as reference: AEP data lake ingestion ~4000–5000 req/s · profile/streaming segmentation "
-        "~1500 req/s · CJA/Analytics 20,000 calls/hour · Analytics 2.0 120 req/min."
+        "~1500 req/s · CJA/Analytics 20,000 calls/hour · Analytics 2.0 120 req/min · **User Management API "
+        "25 req/min per client, 100/min shared org-wide across every client** — by far the strictest of any "
+        "API this app talks to, which is why it gets its own pacer instead of sharing the default above, plus "
+        f"its own {settings.user_directory_cache_hours:.0f}h cache (see the Query Service page's \"Run by\" "
+        "column) rather than refetching on every refresh."
     )
 
     st.divider()

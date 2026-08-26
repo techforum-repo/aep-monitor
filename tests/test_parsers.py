@@ -6,7 +6,7 @@ row shapes the UI/database/alerts layers depend on. Every field-name
 fallback here exists because a real Adobe response was observed (or
 documented) to vary; these tests pin that behavior down."""
 
-from aep_monitor.clients import aep, audit, catalog, cja, observability, query_service, quota, reactor, schema_registry, segmentation
+from aep_monitor.clients import aep, audit, catalog, cja, observability, query_service, quota, reactor, schema_registry, segmentation, user_management
 
 
 # --- AEP Flow Service ---------------------------------------------------------
@@ -697,3 +697,30 @@ def test_parse_schedule_defaults_to_disabled_and_id_as_name():
     row = query_service.parse_schedule({"id": "sch-1"})
     assert row["enabled"] is False
     assert row["name"] == "sch-1"
+
+
+# --- User Management API ------------------------------------------------------
+
+def test_parse_user_builds_display_name_from_first_and_last_name():
+    row = user_management.parse_user({"id": "u1", "email": "jordan.lee@acme.com", "firstname": "Jordan", "lastname": "Lee"})
+    assert row["display_name"] == "Jordan Lee"
+    assert row["user_id"] == "u1"
+
+
+def test_parse_user_falls_back_to_email_when_no_name_is_set():
+    row = user_management.parse_user({"id": "u1", "email": "jordan.lee@acme.com"})
+    assert row["display_name"] == "jordan.lee@acme.com"
+
+
+def test_parse_user_falls_back_to_username_when_no_name_or_email():
+    row = user_management.parse_user({"id": "u1", "username": "jordan.lee"})
+    assert row["display_name"] == "jordan.lee"
+
+
+def test_parse_user_handles_a_missing_id():
+    """Confirmed live: id is "optional if unpopulated" per Adobe's own
+    docs — a technical/service account entry (if it appears at all) may
+    have no id, which must not crash the parser."""
+    row = user_management.parse_user({"email": "svc@acme.com"})
+    assert row["user_id"] == ""
+    assert row["display_name"] == "svc@acme.com"
