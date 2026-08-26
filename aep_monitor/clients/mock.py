@@ -488,8 +488,17 @@ MOCK_SEGMENT_JOBS: list[dict[str, Any]] = [
 # --- Query Service ---------------------------------------------------------------
 
 MOCK_QUERIES: list[dict[str, Any]] = [
-    {"id": "q-1", "name": "Daily loyalty rollup", "state": "SUCCESS", "rowCount": 402_118, "elapsedTime": 14_200, "created": _iso(30), "scheduleId": "sch-1"},
-    {"id": "q-2", "name": None, "state": "FAILED", "errorMsg": "Query exceeded configured timeout", "rowCount": None, "elapsedTime": 601_000, "created": _iso(180)},
+    {
+        "id": "q-1", "name": "Daily loyalty rollup", "state": "SUCCESS",
+        "sql": "SELECT tier, COUNT(DISTINCT loyaltyId) AS members, SUM(pointsBalance) AS total_points\n"
+               "FROM loyalty_events\nWHERE _acmecorp.eventDate >= current_date - INTERVAL '1' DAY\nGROUP BY tier;",
+        "clientType": "acp scheduler", "rowCount": 402_118, "elapsedTime": 14_200, "created": _iso(30), "scheduleId": "sch-1",
+    },
+    {
+        "id": "q-2", "name": None, "state": "FAILED",
+        "sql": "SELECT * FROM web_events w JOIN loyalty_events l ON w._acmecorp.loyaltyId = l._acmecorp.loyaltyId;",
+        "clientType": "interactive", "errorMsg": "Query exceeded configured timeout", "rowCount": None, "elapsedTime": 601_000, "created": _iso(180),
+    },
 ]
 
 MOCK_SCHEDULES: list[dict[str, Any]] = [

@@ -61,6 +61,13 @@ def parse_query(item: dict[str, Any]) -> dict[str, Any]:
         "name": str(item.get("name") or item.get("id") or "(ad hoc)"),
         "state": state,
         "is_bad": state in _BAD_QUERY_STATES,
+        "sql": str(item.get("sql") or ""),
+        # Documented alongside `sql` in Adobe's Queries API reference (e.g.
+        # "interactive" for the Query Editor UI/JDBC, vs. a scheduled run) —
+        # not independently confirmed live like the rest of this client, but
+        # a plain string field with a natural "" fallback either way, so a
+        # wrong guess here degrades to an empty column rather than a crash.
+        "client_type": str(item.get("clientType") or ""),
         "row_count": item.get("rowCount"),
         "elapsed_ms": item.get("elapsedTime"),
         "error_message": str(item.get("errorMsg") or ""),

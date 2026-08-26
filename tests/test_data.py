@@ -141,6 +141,15 @@ def test_fetch_queries_returns_parsed_rows():
     assert by_id["q-2"]["is_bad"] is True
 
 
+def test_fetch_queries_includes_sql_text_and_client_type():
+    """The actual query detail — dropped entirely until this was added,
+    see query_service_page.py's "Query detail" section."""
+    queries = data.fetch_queries()
+    by_id = {q["query_id"]: q for q in queries}
+    assert "loyalty_events" in by_id["q-1"]["sql"]
+    assert by_id["q-1"]["client_type"] == "acp scheduler"
+
+
 def test_fetch_query_schedules_returns_parsed_rows():
     schedules = data.fetch_query_schedules()
     assert schedules[0]["enabled"] is True

@@ -23,7 +23,7 @@ provisioning to cross-product monitoring.
 | **Data Collection** | Reactor | Extension review status, rule state, every library's build state (not just an assumed "latest" one — see limitations), environment build status (dev/staging/**production**), data element publish state |
 | **CJA** | CJA APIs | Connection status, data views built on each connection, and Workspace projects built on those data views |
 | **Segments** | Segmentation Service (Unified Profile) | Segment definitions and recent segment evaluation jobs — the layer between ingestion and activation that was previously unwatched; a failed job here is very often the real cause of "the audience never reached the destination" (see Known Limitations — newest, least-verified integration) |
-| **Query Service** | Query Service | Recent ad-hoc/scheduled queries against the data lake, and which queries are on a schedule (see Known Limitations — same caveat as Segments) |
+| **Query Service** | Query Service | Recent ad-hoc/scheduled queries against the data lake — status, row count, elapsed time, and the actual SQL text per query (a "Query detail" picker, not a table column) — plus which queries are on a schedule (see Known Limitations — same caveat as Segments) |
 | **Compare** | Flow Service + Observability + Schema Registry + Catalog + Reactor + CJA | Five comparison tabs — Sandboxes, Schemas, and Datasets are actual sandbox comparisons; DC Properties and CJA Data Views compare two picked entities instead (both are org-wide). Adobe has no built-in tool for any of these. |
 | **SDR** | CJA Dimensions/Metrics/Calculated Metrics/Projects + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), plus which components are actually referenced by a CJA Workspace project (and which aren't), pulled from reality instead of a hand-maintained doc that drifts |
 | **Audit Log** | Audit Query + Reactor Audit Events + CJA Audit Logs | Who changed what and when, across all three products (best-effort — see below) |
@@ -260,9 +260,14 @@ once per alert, not on every subsequent poll while it's still open.
   (`segments`/`items`/`data` for segment definitions; `records`/`items`/
   `data` for segment jobs and queries — handled defensively, matching the
   established pattern elsewhere in this app), the job/query status
-  vocabulary beyond the obvious `SUCCEEDED`/`FAILED` values, and whether
+  vocabulary beyond the obvious `SUCCEEDED`/`FAILED` values, whether
   `metrics.segmentedProfileCount` is the actual field name on a segment
-  job. Both pages' raw-response expanders show exactly what Adobe returned
+  job, and — on Query Service specifically — whether `clientType` is the
+  real field distinguishing an interactive/Query Editor run from a
+  scheduled one (`sql` itself is documented with higher confidence, and is
+  what the Query Service page's "Query detail" section shows in full,
+  since a table column can't hold a multi-line SELECT). Both pages'
+  raw-response expanders show exactly what Adobe returned
   — check those against what `parse_segment_job()`/`parse_query()` assume
   before trusting this app's numbers on a new tenant. Both clients send
   `x-sandbox-name` defensively (same reasoning as Quota/Audit Query below).

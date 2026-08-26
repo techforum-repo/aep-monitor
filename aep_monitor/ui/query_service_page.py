@@ -53,22 +53,37 @@ def render() -> None:
     if not queries:
         st.info("No queries found for this sandbox/credential.")
     else:
+        # Full SQL is shown in the detail section below, not as a table
+        # column — a multi-line SELECT would blow out row height/column
+        # width in a dataframe; a short one-line preview is enough to spot
+        # which query is which before picking one for detail.
         query_table = pd.DataFrame([
             {
                 "Query": q["name"],
                 "State": status_pill(q["state"]),
+                "Client": q["client_type"] or "—",
                 "Scheduled": "Yes" if q["is_scheduled"] else "No",
                 "Rows": q.get("row_count"),
                 "Elapsed (ms)": q.get("elapsed_ms"),
                 "Error": q["error_message"] or "—",
+                "SQL preview": (q["sql"].splitlines()[0][:80] + "…") if q["sql"] else "—",
+                "query_id": q["query_id"],
             }
             for q in queries
         ])
-        st.dataframe(query_table, use_container_width=True, hide_index=True)
-        st.download_button("Download as CSV", safe_csv(query_table), "queries.csv", "text/csv")
-        with st.expander("Raw responses"):
-            for q in queries:
-                st.json(q["raw"], expanded=False)
+        st.dataframe(query_table.drop(columns=["query_id"]), use_container_width=True, hide_index=True)
+        st.download_button("Download as CSV", safe_csv(query_table.drop(columns=["query_id"])), "queries.csv", "text/csv")
+
+        st.markdown("#### Query detail")
+        names_by_id = {q["query_id"]: f"{q['name']} ({q['query_id']})" for q in queries}
+        selected_id = st.selectbox("Choose a query", list(names_by_id.keys()), format_func=lambda qid: names_by_id[qid])
+        selected = next(q for q in queries if q["query_id"] == selected_id)
+        if selected["sql"]:
+            st.code(selected["sql"], language="sql")
+        else:
+            st.caption("No SQL text returned for this query.")
+        with st.expander("Raw response"):
+            st.json(selected["raw"], expanded=False)
 
     st.divider()
     st.markdown("#### Scheduled queries")

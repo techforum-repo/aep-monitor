@@ -617,6 +617,18 @@ def test_parse_query_flags_a_failed_query():
     assert row["error_message"] == "timeout"
 
 
+def test_parse_query_extracts_sql_and_client_type():
+    row = query_service.parse_query({"id": "q-1", "name": "x", "state": "SUCCESS", "sql": "SELECT 1", "clientType": "interactive"})
+    assert row["sql"] == "SELECT 1"
+    assert row["client_type"] == "interactive"
+
+
+def test_parse_query_defaults_sql_and_client_type_to_empty_when_absent():
+    row = query_service.parse_query({"id": "q-1", "state": "SUCCESS"})
+    assert row["sql"] == ""
+    assert row["client_type"] == ""
+
+
 def test_parse_query_does_not_flag_a_successful_query():
     row = query_service.parse_query({"id": "q-1", "name": "x", "state": "SUCCESS"})
     assert row["is_bad"] is False
