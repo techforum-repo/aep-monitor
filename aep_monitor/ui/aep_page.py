@@ -69,7 +69,7 @@ def render() -> None:
         }
         for r in rows
     ])
-    st.dataframe(table.drop(columns=["flow_id"]), use_container_width=True, hide_index=True)
+    st.dataframe(table.drop(columns=["flow_id"]), use_container_width=True, hide_index=True, key="aep_flows_table")
     st.download_button("Download as CSV", safe_csv(table.drop(columns=["flow_id"])), "aep_flows.csv", "text/csv")
 
     st.divider()
@@ -101,7 +101,7 @@ def render() -> None:
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             yaxis_title="Records", xaxis_title=None,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="aep_history_chart")
 
     st.divider()
     _render_observability()
@@ -153,6 +153,6 @@ def _render_observability() -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         yaxis_title="Count", xaxis_title=None,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="aep_observability_chart")
     with st.expander("Raw response"):
         st.json(metrics, expanded=False)

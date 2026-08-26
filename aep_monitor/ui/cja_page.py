@@ -103,7 +103,7 @@ def render() -> None:
             {"Connection": c["name"], "Status": status_pill(c["status"]), "Last updated": c["updated_at"] or "—"}
             for c in connections
         ])
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.dataframe(table, use_container_width=True, hide_index=True, key="cja_connections_table")
         st.download_button("Download as CSV", safe_csv(table), "cja_connections.csv", "text/csv")
 
     st.divider()
@@ -120,7 +120,7 @@ def render() -> None:
             {"Data view": d["name"], "Connection": _resolve_name(names_by_conn, d["connection_id"]), "Owner": d["owner"] or "—"}
             for d in dataviews
         ])
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.dataframe(table, use_container_width=True, hide_index=True, key="cja_dataviews_table")
         st.download_button("Download as CSV", safe_csv(table), "cja_dataviews.csv", "text/csv")
 
     st.divider()
@@ -154,7 +154,7 @@ def render() -> None:
             }
             for p in projects
         ])
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.dataframe(table, use_container_width=True, hide_index=True, key="cja_projects_table")
         st.download_button("Download as CSV", safe_csv(table), "cja_projects.csv", "text/csv")
         st.caption(
             "For which dimensions/metrics/calculated metrics each project actually references (and which "

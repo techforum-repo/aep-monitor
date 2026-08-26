@@ -29,9 +29,9 @@ def render() -> None:
     st.markdown("### Query Service — ad-hoc & scheduled queries")
     st.caption(f"Recent queries against the data lake, and which are on a schedule. Sandbox: **{get_active_sandbox()}**.")
     st.caption(
-        "⚠️ Newest, least-verified integration in this app (alongside Segments) — the response shape wasn't "
-        "confirmed against a live tenant. See README's Known Limitations; the raw response is always available "
-        "below to check."
+        "The Queries API's shape below is confirmed against Adobe's own published example response. "
+        "⚠️ The Schedules section further down is not — same newest/least-verified caveat as the Segments page; "
+        "see README's Known Limitations. The raw response is always available below to check either way."
     )
 
     if refresh_button("Refresh from Adobe", key="query_service_refresh"):
@@ -59,9 +59,15 @@ def render() -> None:
         # which query is which before picking one for detail.
         query_table = pd.DataFrame([
             {
+                # Confirmed live: the raw query object has no "name" field
+                # at all (unlike segments/flows elsewhere in this app) — id
+                # is the normal, expected value here, not a fallback for a
+                # missing edge case.
                 "Query": q["name"],
                 "State": status_pill(q["state"]),
                 "Client": q["client_type"] or "—",
+                "User": q["user_id"] or "—",
+                "DB": q["db_name"] or "—",
                 "Scheduled": "Yes" if q["is_scheduled"] else "No",
                 "Rows": q.get("row_count"),
                 "Elapsed (ms)": q.get("elapsed_ms"),
@@ -71,17 +77,23 @@ def render() -> None:
             }
             for q in queries
         ])
-        st.dataframe(query_table.drop(columns=["query_id"]), use_container_width=True, hide_index=True)
+        st.dataframe(query_table.drop(columns=["query_id"]), use_container_width=True, hide_index=True, key="query_service_queries_table")
         st.download_button("Download as CSV", safe_csv(query_table.drop(columns=["query_id"])), "queries.csv", "text/csv")
 
         st.markdown("#### Query detail")
-        names_by_id = {q["query_id"]: f"{q['name']} ({q['query_id']})" for q in queries}
+        names_by_id = {q["query_id"]: f"{q['name']} — {q['state']}" for q in queries}
         selected_id = st.selectbox("Choose a query", list(names_by_id.keys()), format_func=lambda qid: names_by_id[qid])
         selected = next(q for q in queries if q["query_id"] == selected_id)
         if selected["sql"]:
             st.code(selected["sql"], language="sql")
         else:
             st.caption("No SQL text returned for this query.")
+        detail_cols = st.columns(3)
+        detail_cols[0].caption(f"Database: **{selected['db_name'] or '—'}**")
+        detail_cols[1].caption(f"Run by: **{selected['user_id'] or '—'}**")
+        detail_cols[2].caption(f"Updated: **{format_timestamp(selected['updated_at'])}**")
+        if selected["referenced_dataset_ids"]:
+            st.caption("Referenced datasets (raw ids, not resolved to names): " + ", ".join(selected["referenced_dataset_ids"]))
         with st.expander("Raw response"):
             st.json(selected["raw"], expanded=False)
 
@@ -91,4 +103,4 @@ def render() -> None:
         st.caption("No scheduled queries found.")
     else:
         sched_table = pd.DataFrame([{"Schedule": s["name"], "Enabled": "Yes" if s["enabled"] else "No"} for s in schedules])
-        st.dataframe(sched_table, use_container_width=True, hide_index=True)
+        st.dataframe(sched_table, use_container_width=True, hide_index=True, key="query_service_schedules_table")

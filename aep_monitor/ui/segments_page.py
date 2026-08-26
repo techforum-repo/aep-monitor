@@ -57,7 +57,7 @@ def render() -> None:
             {"Segment": s["name"], "Description": s["description"] or "—", "Schema": s["schema_ref"] or "—"}
             for s in segments
         ])
-        st.dataframe(seg_table, use_container_width=True, hide_index=True)
+        st.dataframe(seg_table, use_container_width=True, hide_index=True, key="segments_definitions_table")
         st.download_button("Download as CSV", safe_csv(seg_table), "segments.csv", "text/csv")
 
     st.divider()
@@ -81,7 +81,7 @@ def render() -> None:
         }
         for j in jobs
     ])
-    st.dataframe(job_table, use_container_width=True, hide_index=True)
+    st.dataframe(job_table, use_container_width=True, hide_index=True, key="segments_jobs_table")
     st.download_button("Download as CSV", safe_csv(job_table), "segment_jobs.csv", "text/csv")
 
     with st.expander("Raw responses"):

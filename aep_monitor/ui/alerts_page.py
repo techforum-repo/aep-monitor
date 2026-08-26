@@ -38,5 +38,5 @@ def render() -> None:
         else:
             st.dataframe(
                 resolved_alerts[["created_at", "source", "severity", "title", "resolved_at"]],
-                use_container_width=True, hide_index=True,
+                use_container_width=True, hide_index=True, key="alerts_resolved_table",
             )

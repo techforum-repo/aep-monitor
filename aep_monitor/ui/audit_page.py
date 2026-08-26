@@ -14,7 +14,7 @@ def _render_events_table(events: list[dict], *, csv_filename: str, key_prefix: s
         for e in events
     ]
     table = pd.DataFrame(columns)
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, use_container_width=True, hide_index=True, key=f"{key_prefix}_table")
     st.download_button("Download as CSV", safe_csv(table), csv_filename, "text/csv", key=f"{key_prefix}_csv")
     with st.expander("Raw response (first event)"):
         st.json(events[0]["raw"], expanded=False)

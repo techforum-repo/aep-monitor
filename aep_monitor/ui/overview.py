@@ -110,7 +110,7 @@ def render() -> None:
     else:
         st.dataframe(
             open_alerts[["created_at", "source", "severity", "title"]],
-            use_container_width=True, hide_index=True,
+            use_container_width=True, hide_index=True, key="overview_open_alerts_table",
         )
         st.caption("Resolve or review these on the Alerts page.")
 
@@ -138,7 +138,7 @@ def render() -> None:
                         height=220, margin=dict(l=10, r=10, t=10, b=10),
                         yaxis_title="% used", yaxis_range=[0, max(100, history["pct_used"].max())], xaxis_title=None,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key=f"overview_quota_trend_chart_{row['name']}")
                     st.caption(
                         f"A rising trend projected to cross 100% within {settings.alert_quota_trend_days} days "
                         "raises an early warning on the Alerts page, separately from the plain "

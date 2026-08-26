@@ -488,16 +488,28 @@ MOCK_SEGMENT_JOBS: list[dict[str, Any]] = [
 # --- Query Service ---------------------------------------------------------------
 
 MOCK_QUERIES: list[dict[str, Any]] = [
+    # Shaped exactly like Adobe's own published example response (see
+    # clients/query_service.py's parse_query() docstring) — note there's no
+    # top-level "sql" or "name" field, and "id-2"'s error lives in an
+    # "errors" array, not an "errorMsg" string; the original mock data
+    # guessed all three wrong, which is exactly why it never caught the
+    # live bug this shape now pins down.
     {
-        "id": "q-1", "name": "Daily loyalty rollup", "state": "SUCCESS",
-        "sql": "SELECT tier, COUNT(DISTINCT loyaltyId) AS members, SUM(pointsBalance) AS total_points\n"
-               "FROM loyalty_events\nWHERE _acmecorp.eventDate >= current_date - INTERVAL '1' DAY\nGROUP BY tier;",
-        "clientType": "acp scheduler", "rowCount": 402_118, "elapsedTime": 14_200, "created": _iso(30), "scheduleId": "sch-1",
+        "id": "q-1", "state": "SUCCESS",
+        "request": {
+            "dbName": "prod:all",
+            "sql": "SELECT tier, COUNT(DISTINCT loyaltyId) AS members, SUM(pointsBalance) AS total_points\n"
+                   "FROM loyalty_events\nWHERE _acmecorp.eventDate >= current_date - INTERVAL '1' DAY\nGROUP BY tier;",
+        },
+        "client": "Adobe Query Service Scheduler", "errors": [], "rowCount": 402_118, "elapsedTime": 14_200,
+        "created": _iso(30), "updated": _iso(29), "userId": "acp-scheduler", "scheduleId": "sch-1",
+        "_links": {"referenced_datasets": [{"id": "ds-loyalty-events", "href": "https://platform.adobe.io/data/foundation/catalog/dataSets/ds-loyalty-events"}]},
     },
     {
-        "id": "q-2", "name": None, "state": "FAILED",
-        "sql": "SELECT * FROM web_events w JOIN loyalty_events l ON w._acmecorp.loyaltyId = l._acmecorp.loyaltyId;",
-        "clientType": "interactive", "errorMsg": "Query exceeded configured timeout", "rowCount": None, "elapsedTime": 601_000, "created": _iso(180),
+        "id": "q-2", "state": "FAILED",
+        "request": {"dbName": "prod:all", "sql": "SELECT * FROM web_events w JOIN loyalty_events l ON w._acmecorp.loyaltyId = l._acmecorp.loyaltyId;"},
+        "client": "Adobe Query Service UI", "errors": [{"code": "0A500", "message": "Query exceeded configured timeout"}],
+        "rowCount": None, "elapsedTime": 601_000, "created": _iso(180), "updated": _iso(170), "userId": "jordan.lee@acme.com",
     },
 ]
 

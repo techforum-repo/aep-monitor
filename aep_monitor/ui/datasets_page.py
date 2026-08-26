@@ -69,7 +69,7 @@ def render() -> None:
         }
         for r in rows
     ])
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, use_container_width=True, hide_index=True, key="datasets_table")
     st.download_button("Download as CSV", safe_csv(table), "aep_datasets.csv", "text/csv")
 
     with st.expander("Raw response (first dataset)"):

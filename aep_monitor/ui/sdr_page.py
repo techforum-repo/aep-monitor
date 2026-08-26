@@ -91,7 +91,7 @@ def _render_cja_section() -> None:
                 {"Name": d["name"], "Description": d["description"], "Type": d["type"], "Source field": d["source_field"], "Approved": d["approved"]}
                 for d in entry["dimensions"]
             ])
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            st.dataframe(table, use_container_width=True, hide_index=True, key="sdr_dimensions_table")
             st.download_button("Download as CSV", safe_csv(table), f"cja_{selected_id}_dimensions.csv", "text/csv", key="sdr_dims_csv")
         else:
             st.caption("No dimensions.")
@@ -101,7 +101,7 @@ def _render_cja_section() -> None:
                 {"Name": m["name"], "Description": m["description"], "Type": m["type"], "Source field": m["source_field"], "Approved": m["approved"]}
                 for m in entry["metrics"]
             ])
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            st.dataframe(table, use_container_width=True, hide_index=True, key="sdr_metrics_table")
             st.download_button("Download as CSV", safe_csv(table), f"cja_{selected_id}_metrics.csv", "text/csv", key="sdr_metrics_csv")
         else:
             st.caption("No metrics.")
@@ -111,7 +111,7 @@ def _render_cja_section() -> None:
                 {"Name": m["name"], "Description": m["description"], "Type": m["type"], "Polarity": m["polarity"]}
                 for m in entry["calculated_metrics"]
             ])
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            st.dataframe(table, use_container_width=True, hide_index=True, key="sdr_calc_metrics_table")
             st.download_button("Download as CSV", safe_csv(table), f"cja_{selected_id}_calculated_metrics.csv", "text/csv", key="sdr_calc_metrics_csv")
         else:
             st.caption("No calculated metrics.")
@@ -168,7 +168,7 @@ def _render_component_usage(selected_id: str, entry: dict) -> None:
             "Projects": ", ".join(matched["projects"]) if matched else "—",
         })
     table = pd.DataFrame(rows).sort_values("Used in projects")
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, use_container_width=True, hide_index=True, key="sdr_component_usage_table")
     st.download_button("Download as CSV", safe_csv(table), f"cja_{selected_id}_component_usage.csv", "text/csv", key="sdr_component_usage_csv")
 
     unused_count = int((table["Used in projects"] == 0).sum())
@@ -187,7 +187,7 @@ def _render_component_usage(selected_id: str, entry: dict) -> None:
                 {"Name": s["name"], "Type": s["type"], "Projects": ", ".join(s["projects"])}
                 for s in stale
             ])
-            st.dataframe(stale_table, use_container_width=True, hide_index=True)
+            st.dataframe(stale_table, use_container_width=True, hide_index=True, key="sdr_stale_usage_table")
 
     with st.expander(f"Raw entity references ({len(references)} found, unfiltered)"):
         st.caption(
@@ -202,7 +202,7 @@ def _render_component_usage(selected_id: str, entry: dict) -> None:
         if references:
             st.dataframe(
                 pd.DataFrame([{"Id": r["id"], "Type": r["type"], "Name": r["name"], "Project": r["project_name"]} for r in references]),
-                use_container_width=True, hide_index=True,
+                use_container_width=True, hide_index=True, key="sdr_raw_entity_refs_table",
             )
         else:
             st.caption("No entity references extracted at all.")
@@ -293,7 +293,7 @@ def _render_aep_section() -> None:
         # truncates that without an obvious way to tell more is there.
         # Widened explicitly rather than left to auto-fit.
         st.dataframe(
-            table, use_container_width=True, hide_index=True,
+            table, use_container_width=True, hide_index=True, key="sdr_schema_fields_table",
             column_config={"Labels": st.column_config.TextColumn(width="large")},
         )
         st.download_button("Download as CSV", safe_csv(table), "aep_schema_fields.csv", "text/csv", key="sdr_fields_csv")
@@ -324,7 +324,7 @@ def _render_aep_section() -> None:
                     {"Path": d["path"], "Labels": ", ".join(d["labels"]) or "—", "Source schema (field group id)": d["source_schema"]}
                     for d in labels_entry["descriptors"]
                 ])
-                st.dataframe(debug_table, use_container_width=True, hide_index=True)
+                st.dataframe(debug_table, use_container_width=True, hide_index=True, key="sdr_raw_label_descriptors_table")
             else:
                 st.caption("No label descriptors returned for this sandbox at all.")
 

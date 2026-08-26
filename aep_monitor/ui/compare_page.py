@@ -38,12 +38,17 @@ def _render_baseline_banner(has_baseline: bool, baseline_checked_at: str | None,
         st.caption(f"Comparing against the snapshot taken {format_timestamp(baseline_checked_at)}.")
 
 
-def _render_diff(diff: dict, label_a: str, label_b: str, detail_fields: list[tuple[str, str]]) -> None:
+def _render_diff(diff: dict, label_a: str, label_b: str, detail_fields: list[tuple[str, str]], key_prefix: str) -> None:
     """Generic renderer for one diffing.diff_by_key() result: a 4-metric
     summary row, then a table each for only-A, only-B, and changed common
     items (old vs. new value per changed field). `detail_fields` is
     `[(field_key, display_label), ...]` for the fields worth showing when
-    a common item changed (e.g. a schema field's type/title/description)."""
+    a common item changed (e.g. a schema field's type/title/description).
+
+    `key_prefix` must be unique per call site — this one helper is called
+    ~19 times across every tab (5 diff types x drift/compare mode x DC/CJA,
+    plus Schemas/Datasets), so a table without a distinct key would collide
+    with every other call's table in the same script run."""
     only_a, only_b, common = diff["only_a"], diff["only_b"], diff["common"]
     changed = [c for c in common if c["changed_fields"]]
 
@@ -59,10 +64,16 @@ def _render_diff(diff: dict, label_a: str, label_b: str, detail_fields: list[tup
 
     if only_a:
         st.markdown(f"**Only in {label_a}**")
-        st.dataframe(pd.DataFrame([{"Name": item.get("name") or item.get("path") or ""} for item in only_a]), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame([{"Name": item.get("name") or item.get("path") or ""} for item in only_a]),
+            use_container_width=True, hide_index=True, key=f"{key_prefix}_only_a",
+        )
     if only_b:
         st.markdown(f"**Only in {label_b}**")
-        st.dataframe(pd.DataFrame([{"Name": item.get("name") or item.get("path") or ""} for item in only_b]), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame([{"Name": item.get("name") or item.get("path") or ""} for item in only_b]),
+            use_container_width=True, hide_index=True, key=f"{key_prefix}_only_b",
+        )
     if changed:
         st.markdown("**Changed**")
         rows = []
@@ -73,7 +84,7 @@ def _render_diff(diff: dict, label_a: str, label_b: str, detail_fields: list[tup
                     row[f"{field_label} ({label_a})"] = entry["a"].get(field_key)
                     row[f"{field_label} ({label_b})"] = entry["b"].get(field_key)
             rows.append(row)
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, key=f"{key_prefix}_changed")
 
 
 # --- Sandboxes (AEP) ---------------------------------------------------------------
@@ -135,17 +146,17 @@ def _render_sandboxes_tab() -> None:
     if table.empty:
         st.caption("No successful sandbox fetches to show.")
         return
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, use_container_width=True, hide_index=True, key="compare_sandboxes_table")
 
     col1, col2 = st.columns(2)
     with col1:
         fig = go.Figure(go.Bar(x=table["Sandbox"], y=table["Failing flows"], marker_color=_RED))
         fig.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), title="Failing flows by sandbox", yaxis_title="Count")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="compare_sandboxes_failing_chart")
     with col2:
         fig = go.Figure(go.Bar(x=table["Sandbox"], y=table["Batches failed (24h)"], marker_color=_RED))
         fig.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), title="Batches failed, last 24h", yaxis_title="Count")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="compare_sandboxes_batchfailed_chart")
 
 
 # --- Schemas (AEP, across sandboxes) ------------------------------------------------
@@ -211,7 +222,7 @@ def _render_schemas_tab() -> None:
         result = drift_entry["result"]
         _render_baseline_banner(result["has_baseline"], result.get("baseline_checked_at"), schema_title)
         if result["has_baseline"]:
-            _render_diff(result["diff"], "Previous snapshot", "Current", [("type", "Type"), ("title", "Title"), ("description", "Description")])
+            _render_diff(result["diff"], "Previous snapshot", "Current", [("type", "Type"), ("title", "Title"), ("description", "Description")], key_prefix="compare_schema_drift")
         return
 
     if len(sandboxes) < 2:
@@ -272,7 +283,7 @@ def _render_schemas_tab() -> None:
     if schema_title_a != schema_title_b:
         st.info(f"Comparing two different schemas: **{schema_title_a}** ({sandbox_a}) vs. **{schema_title_b}** ({sandbox_b}).")
     label_a, label_b = f"{schema_title_a} ({sandbox_a})", f"{schema_title_b} ({sandbox_b})"
-    _render_diff(diff_entry["result"]["diff"], label_a, label_b, [("type", "Type"), ("title", "Title"), ("description", "Description")])
+    _render_diff(diff_entry["result"]["diff"], label_a, label_b, [("type", "Type"), ("title", "Title"), ("description", "Description")], key_prefix="compare_schema")
 
 
 # --- Datasets (AEP, across sandboxes) -----------------------------------------------
@@ -364,7 +375,7 @@ def _render_datasets_tab() -> None:
             }
             for r in rows
         ])
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.dataframe(table, use_container_width=True, hide_index=True, key="compare_datasets_drift_table")
         return
 
     if len(sandboxes) < 2:
@@ -436,7 +447,7 @@ def _render_datasets_tab() -> None:
         }
         for r in rows
     ])
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, use_container_width=True, hide_index=True, key="compare_datasets_table")
 
     # The row above only says the schema *binding* differs (by name/id) —
     # it doesn't say what's actually different about the two schemas'
@@ -463,7 +474,10 @@ def _render_datasets_tab() -> None:
         else:
             label_a = schema_titles_a.get(schema_id_a, schema_id_a.rsplit("/", 1)[-1])
             label_b = schema_titles_b.get(schema_id_b, schema_id_b.rsplit("/", 1)[-1])
-            _render_diff(schema_diff_entry["result"]["diff"], f"{label_a} ({sandbox_a})", f"{label_b} ({sandbox_b})", [("type", "Type"), ("title", "Title"), ("description", "Description")])
+            _render_diff(
+                schema_diff_entry["result"]["diff"], f"{label_a} ({sandbox_a})", f"{label_b} ({sandbox_b})",
+                [("type", "Type"), ("title", "Title"), ("description", "Description")], key_prefix="compare_dataset_schema_diff",
+            )
     elif schema_id_a or schema_id_b:
         st.caption("One of the two datasets has no schema binding — nothing to compare at the field level.")
 
@@ -515,15 +529,15 @@ def _render_dc_tab() -> None:
             ["Extensions", "Rules", "Libraries", "Environments", "Data Elements"]
         )
         with tab_ext:
-            _render_diff(result["extensions"], "Previous snapshot", "Current", [("review_status", "Review status"), ("published", "Published")])
+            _render_diff(result["extensions"], "Previous snapshot", "Current", [("review_status", "Review status"), ("published", "Published")], key_prefix="compare_dc_drift_ext")
         with tab_rules:
-            _render_diff(result["rules"], "Previous snapshot", "Current", [("enabled", "Enabled"), ("published", "Published")])
+            _render_diff(result["rules"], "Previous snapshot", "Current", [("enabled", "Enabled"), ("published", "Published")], key_prefix="compare_dc_drift_rules")
         with tab_libs:
-            _render_diff(result["libraries"], "Previous snapshot", "Current", [("state", "State")])
+            _render_diff(result["libraries"], "Previous snapshot", "Current", [("state", "State")], key_prefix="compare_dc_drift_libs")
         with tab_envs:
-            _render_diff(result["environments"], "Previous snapshot", "Current", [("status", "Status")])
+            _render_diff(result["environments"], "Previous snapshot", "Current", [("status", "Status")], key_prefix="compare_dc_drift_envs")
         with tab_data_elements:
-            _render_diff(result["data_elements"], "Previous snapshot", "Current", [("published", "Published"), ("dirty", "Dirty"), ("review_status", "Review status")])
+            _render_diff(result["data_elements"], "Previous snapshot", "Current", [("published", "Published"), ("dirty", "Dirty"), ("review_status", "Review status")], key_prefix="compare_dc_drift_de")
         return
 
     if len(rows) < 2:
@@ -545,15 +559,15 @@ def _render_dc_tab() -> None:
         ["Extensions", "Rules", "Libraries", "Environments", "Data Elements"]
     )
     with tab_ext:
-        _render_diff(result["extensions"], names_by_id[property_a], names_by_id[property_b], [("review_status", "Review status"), ("published", "Published")])
+        _render_diff(result["extensions"], names_by_id[property_a], names_by_id[property_b], [("review_status", "Review status"), ("published", "Published")], key_prefix="compare_dc_ext")
     with tab_rules:
-        _render_diff(result["rules"], names_by_id[property_a], names_by_id[property_b], [("enabled", "Enabled"), ("published", "Published")])
+        _render_diff(result["rules"], names_by_id[property_a], names_by_id[property_b], [("enabled", "Enabled"), ("published", "Published")], key_prefix="compare_dc_rules")
     with tab_libs:
-        _render_diff(result["libraries"], names_by_id[property_a], names_by_id[property_b], [("state", "State")])
+        _render_diff(result["libraries"], names_by_id[property_a], names_by_id[property_b], [("state", "State")], key_prefix="compare_dc_libs")
     with tab_envs:
-        _render_diff(result["environments"], names_by_id[property_a], names_by_id[property_b], [("status", "Status")])
+        _render_diff(result["environments"], names_by_id[property_a], names_by_id[property_b], [("status", "Status")], key_prefix="compare_dc_envs")
     with tab_data_elements:
-        _render_diff(result["data_elements"], names_by_id[property_a], names_by_id[property_b], [("published", "Published"), ("dirty", "Dirty"), ("review_status", "Review status")])
+        _render_diff(result["data_elements"], names_by_id[property_a], names_by_id[property_b], [("published", "Published"), ("dirty", "Dirty"), ("review_status", "Review status")], key_prefix="compare_dc_de")
 
 
 # --- CJA data views ---------------------------------------------------------------
@@ -598,11 +612,11 @@ def _render_cja_tab() -> None:
 
         tab_dims, tab_metrics, tab_calc_metrics = st.tabs(["Dimensions", "Metrics", "Calculated Metrics"])
         with tab_dims:
-            _render_diff(result["dimensions"], "Previous snapshot", "Current", [("type", "Type"), ("approved", "Approved")])
+            _render_diff(result["dimensions"], "Previous snapshot", "Current", [("type", "Type"), ("approved", "Approved")], key_prefix="compare_cja_drift_dims")
         with tab_metrics:
-            _render_diff(result["metrics"], "Previous snapshot", "Current", [("type", "Type"), ("approved", "Approved")])
+            _render_diff(result["metrics"], "Previous snapshot", "Current", [("type", "Type"), ("approved", "Approved")], key_prefix="compare_cja_drift_metrics")
         with tab_calc_metrics:
-            _render_diff(result["calculated_metrics"], "Previous snapshot", "Current", [("type", "Type"), ("polarity", "Polarity")])
+            _render_diff(result["calculated_metrics"], "Previous snapshot", "Current", [("type", "Type"), ("polarity", "Polarity")], key_prefix="compare_cja_drift_calc")
         return
 
     if len(dataviews) < 2:
@@ -622,11 +636,11 @@ def _render_cja_tab() -> None:
 
     tab_dims, tab_metrics, tab_calc_metrics = st.tabs(["Dimensions", "Metrics", "Calculated Metrics"])
     with tab_dims:
-        _render_diff(result["dimensions"], names_by_id[dataview_a], names_by_id[dataview_b], [("type", "Type"), ("approved", "Approved")])
+        _render_diff(result["dimensions"], names_by_id[dataview_a], names_by_id[dataview_b], [("type", "Type"), ("approved", "Approved")], key_prefix="compare_cja_dims")
     with tab_metrics:
-        _render_diff(result["metrics"], names_by_id[dataview_a], names_by_id[dataview_b], [("type", "Type"), ("approved", "Approved")])
+        _render_diff(result["metrics"], names_by_id[dataview_a], names_by_id[dataview_b], [("type", "Type"), ("approved", "Approved")], key_prefix="compare_cja_metrics")
     with tab_calc_metrics:
-        _render_diff(result["calculated_metrics"], names_by_id[dataview_a], names_by_id[dataview_b], [("type", "Type"), ("polarity", "Polarity")])
+        _render_diff(result["calculated_metrics"], names_by_id[dataview_a], names_by_id[dataview_b], [("type", "Type"), ("polarity", "Polarity")], key_prefix="compare_cja_calc")
 
 
 def render() -> None:

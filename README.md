@@ -245,32 +245,60 @@ once per alert, not on every subsequent poll while it's still open.
   column shows raw ids instead of names on your tenant, that's why; the
   underlying `flow_id`/`state` columns are unaffected either way.
 - **Segmentation Service and Query Service** (`clients/segmentation.py`,
-  `clients/query_service.py`) are the newest, least-verified integrations
-  in this app — same caveat class as Audit Query/Observability Insights
-  below, added to close a real coverage gap rather than a peripheral one:
-  this app already watched ingestion (Flow Service) and consumption (CJA
-  connections/data views/projects), but nothing watched the layer in
-  between that actually *produces* what an activation flow exports — a
-  failed segment job is very often the real upstream cause of "the
-  audience never reached the destination." Confirmed via Adobe's published
-  docs: both live under real, documented endpoints (Segmentation under the
-  Unified Profile base `platform.adobe.io/data/core/ups`, Query Service
-  under `platform.adobe.io/data/foundation/query`). **Not confirmed
-  live:** the exact list-response envelope key for either
-  (`segments`/`items`/`data` for segment definitions; `records`/`items`/
-  `data` for segment jobs and queries — handled defensively, matching the
-  established pattern elsewhere in this app), the job/query status
-  vocabulary beyond the obvious `SUCCEEDED`/`FAILED` values, whether
-  `metrics.segmentedProfileCount` is the actual field name on a segment
-  job, and — on Query Service specifically — whether `clientType` is the
-  real field distinguishing an interactive/Query Editor run from a
-  scheduled one (`sql` itself is documented with higher confidence, and is
-  what the Query Service page's "Query detail" section shows in full,
-  since a table column can't hold a multi-line SELECT). Both pages'
-  raw-response expanders show exactly what Adobe returned
-  — check those against what `parse_segment_job()`/`parse_query()` assume
-  before trusting this app's numbers on a new tenant. Both clients send
-  `x-sandbox-name` defensively (same reasoning as Quota/Audit Query below).
+  `clients/query_service.py`) were added to close a real coverage gap
+  rather than a peripheral one: this app already watched ingestion (Flow
+  Service) and consumption (CJA connections/data views/projects), but
+  nothing watched the layer in between that actually *produces* what an
+  activation flow exports — a failed segment job is very often the real
+  upstream cause of "the audience never reached the destination."
+
+  **Query Service's Queries API is now confirmed against Adobe's own
+  published example response** (not just docs prose) — and doing that
+  caught three real mistakes in the original, guessed version of
+  `parse_query()`, the same class of gap Connections/Data Views hit
+  earlier in this document:
+  - `sql` is **not top-level** — it's nested under `request.sql` (alongside
+    `request.dbName`, the database context). The original `item.get("sql")`
+    always returned `""` against a real tenant — this is why the Query
+    Service page's detail view showed "No SQL text returned for this
+    query" live even though mock mode looked fine (mock data had guessed
+    the same wrong flat shape, so it validated the parser against its own
+    mistake — same root cause as the Audit Query envelope bug above).
+  - The client/origin field is `client` (e.g. `"Adobe Query Service UI"`),
+    not `clientType` — kept as a fallback in case a different tenant/version
+    uses it.
+  - Error info is an `errors` **array**, not a single `errorMsg` string.
+    Adobe's own example only shows an empty array, so a populated entry's
+    exact shape isn't confirmed — handled defensively for either a plain
+    string or a `{message: ...}` object.
+
+  Also confirmed live (not a guess): the raw query object has **no `name`
+  field at all** — unlike segments/flows elsewhere in this app, a query is
+  identified by `id` only; falling back to `id` in the Query column is the
+  *normal* path here, not an edge case. The list envelope is HAL-style
+  (`{"queries": [...], "_page": {...}, "_links": {...}}`, confirmed live),
+  and a query's `_links.referenced_datasets` — shown as raw ids, not
+  resolved to names, in the detail section — is a real field too.
+  **Not confirmed:** whether `is_scheduled`'s `scheduleId`/`isScheduled`
+  detection matches anything on a real scheduled query — no scheduled-query
+  example exists in Adobe's docs to check against.
+
+  **The Schedules API (`list_schedules()`/`parse_schedule()`) is NOT
+  independently confirmed the same way** — still the newest,
+  least-verified piece of this integration, same caveat class as
+  Segmentation below. Both pages' raw-response expanders show exactly what
+  Adobe returned; check those against what `parse_segment_job()`/
+  `parse_schedule()` assume before trusting a new tenant's numbers.
+
+  **Segmentation Service is still unconfirmed against a live tenant** —
+  the exact list-response envelope key (`segments`/`items`/`data` for
+  segment definitions; `records`/`items`/`data` for segment jobs, handled
+  defensively), the job status vocabulary beyond the obvious
+  `SUCCEEDED`/`FAILED` values, and whether `metrics.segmentedProfileCount`
+  is the actual field name on a segment job are all best-effort.
+
+  Both clients send `x-sandbox-name` defensively (same reasoning as
+  Quota/Audit Query below).
 - **Audit Query API** parsing (`aep_monitor/clients/audit.py`) is the least
   exercised part of this app — its exact query-parameter and response
   contract wasn't verified against a live tenant while building this.

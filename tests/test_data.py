@@ -142,12 +142,15 @@ def test_fetch_queries_returns_parsed_rows():
 
 
 def test_fetch_queries_includes_sql_text_and_client_type():
-    """The actual query detail — dropped entirely until this was added,
-    see query_service_page.py's "Query detail" section."""
+    """The actual query detail — dropped entirely until this was added
+    (and initially still broken live, since sql lives under `request.sql`,
+    not top-level — see query_service_page.py's "Query detail" section and
+    parse_query()'s docstring)."""
     queries = data.fetch_queries()
     by_id = {q["query_id"]: q for q in queries}
     assert "loyalty_events" in by_id["q-1"]["sql"]
-    assert by_id["q-1"]["client_type"] == "acp scheduler"
+    assert by_id["q-1"]["db_name"] == "prod:all"
+    assert by_id["q-1"]["client_type"] == "Adobe Query Service Scheduler"
 
 
 def test_fetch_query_schedules_returns_parsed_rows():

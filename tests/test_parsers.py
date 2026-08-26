@@ -612,21 +612,46 @@ def test_parse_segment_job_does_not_crash_when_metrics_is_not_an_object():
 # --- Query Service -----------------------------------------------------------
 
 def test_parse_query_flags_a_failed_query():
-    row = query_service.parse_query({"id": "q-1", "name": "x", "state": "FAILED", "errorMsg": "timeout"})
+    row = query_service.parse_query({"id": "q-1", "name": "x", "state": "FAILED", "errors": [{"code": "E1", "message": "timeout"}]})
     assert row["is_bad"] is True
     assert row["error_message"] == "timeout"
 
 
-def test_parse_query_extracts_sql_and_client_type():
-    row = query_service.parse_query({"id": "q-1", "name": "x", "state": "SUCCESS", "sql": "SELECT 1", "clientType": "interactive"})
+def test_parse_query_extracts_sql_from_the_nested_request_object():
+    """Confirmed live via Adobe's own docs example: `sql` (and `dbName`)
+    live under `request`, not top-level — the original guess put them
+    top-level and always returned "" against a real tenant."""
+    row = query_service.parse_query({"id": "q-1", "state": "SUCCESS", "request": {"sql": "SELECT 1", "dbName": "prod:all"}, "client": "Adobe Query Service UI"})
     assert row["sql"] == "SELECT 1"
-    assert row["client_type"] == "interactive"
+    assert row["db_name"] == "prod:all"
+    assert row["client_type"] == "Adobe Query Service UI"
+
+
+def test_parse_query_falls_back_to_top_level_sql_for_a_differently_shaped_tenant():
+    row = query_service.parse_query({"id": "q-1", "state": "SUCCESS", "sql": "SELECT 1"})
+    assert row["sql"] == "SELECT 1"
 
 
 def test_parse_query_defaults_sql_and_client_type_to_empty_when_absent():
     row = query_service.parse_query({"id": "q-1", "state": "SUCCESS"})
     assert row["sql"] == ""
     assert row["client_type"] == ""
+
+
+def test_parse_query_error_message_handles_a_list_of_plain_strings_too():
+    """Adobe's own docs example only shows an empty errors array, so a
+    populated entry's exact shape isn't confirmed — this pins the
+    string-list fallback alongside the {message: ...} object case above."""
+    row = query_service.parse_query({"id": "q-1", "state": "FAILED", "errors": ["timeout"]})
+    assert row["error_message"] == "timeout"
+
+
+def test_parse_query_has_no_name_field_on_the_real_object_so_falls_back_to_id():
+    """Confirmed live: the raw query object has no "name" field at all —
+    unlike segments/flows elsewhere in this app. This is the normal path
+    here, not an edge case."""
+    row = query_service.parse_query({"id": "q-1", "state": "SUCCESS", "request": {"sql": "SELECT 1"}})
+    assert row["name"] == "q-1"
 
 
 def test_parse_query_does_not_flag_a_successful_query():

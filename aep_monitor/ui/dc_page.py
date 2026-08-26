@@ -60,7 +60,7 @@ def render() -> None:
         }
         for r in rows
     ])
-    st.dataframe(table.drop(columns=["property_id"]), use_container_width=True, hide_index=True)
+    st.dataframe(table.drop(columns=["property_id"]), use_container_width=True, hide_index=True, key="dc_properties_table")
     st.download_button("Download as CSV", safe_csv(table.drop(columns=["property_id"])), "dc_properties.csv", "text/csv")
 
     st.divider()
