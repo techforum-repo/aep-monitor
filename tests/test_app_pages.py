@@ -566,16 +566,32 @@ def test_cja_page_shows_connection_and_dataview_names_not_raw_ids():
     assert not any("conn-" in str(v) for v in dv_table["Connection"])
 
 
-def test_cja_page_shows_data_views_after_visiting_overview_first():
+def test_cja_page_shows_projects_with_resolved_dataview_names():
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.radio(key="navigation").set_value("CJA").run()
+
+    assert at.exception == []
+    proj_table = next(df.value for df in at.get("dataframe") if "Project" in df.value.columns)
+    assert len(proj_table) == 3  # all 3 mock projects, across both data views
+    assert "Executive Weekly Report" in set(proj_table["Project"])
+    # Resolved to the data view's name, not its raw id.
+    assert "Executive Dashboard View" in set(proj_table["Data view"])
+    assert not any(str(v).startswith("dv-") for v in proj_table["Data view"])
+
+
+def test_cja_page_shows_data_views_and_projects_after_visiting_overview_first():
     """Regression: Overview's "Refresh everything" populates
     cja_connections (via refresh_all() -> refresh_cja()) but not
-    cja_dataviews — it has no reason to know the CJA page also needs that.
-    _ensure_loaded() originally only checked cja_connections, so landing on
-    Overview (the app's default page) before clicking into CJA left
-    cja_dataviews stuck at None — "No data views found" even though data
-    views exist — until a manual refresh on the CJA page itself. This is
-    exactly the sequence AppTest.run() -> navigate exercises, which is why
-    the plain "renders without exception" smoke test never caught it."""
+    cja_dataviews/cja_projects — it has no reason to know the CJA page also
+    needs those. _ensure_loaded() originally only checked cja_connections,
+    so landing on Overview (the app's default page) before clicking into
+    CJA left cja_dataviews stuck at None — "No data views found" even
+    though data views exist — until a manual refresh on the CJA page
+    itself. This is exactly the sequence AppTest.run() -> navigate
+    exercises, which is why the plain "renders without exception" smoke
+    test never caught it. cja_projects was added to the same check from
+    the start rather than needing its own separate live bug report first."""
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()  # lands on Overview by default, populating cja_connections only
     at.radio(key="navigation").set_value("CJA").run()
@@ -583,8 +599,11 @@ def test_cja_page_shows_data_views_after_visiting_overview_first():
     assert at.exception == []
     info_text = " ".join(i.value for i in at.info)
     assert "No data views found" not in info_text
+    assert "No CJA Workspace projects found" not in info_text
     dv_table = next(df.value for df in at.get("dataframe") if "Data view" in df.value.columns)
     assert len(dv_table) == 2  # both mock data views, not stuck empty
+    proj_table = next(df.value for df in at.get("dataframe") if "Project" in df.value.columns)
+    assert len(proj_table) == 3  # all 3 mock projects, not stuck empty
 
 
 def test_audit_log_page_renders_all_three_product_sections():

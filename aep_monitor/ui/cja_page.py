@@ -10,14 +10,16 @@ from .shared import format_timestamp, refresh_button, render_friendly_error, sta
 
 
 def _ensure_loaded() -> None:
-    # Checks both, not just cja_connections: the Overview page's "Refresh
-    # everything" populates cja_connections (via refresh_all() -> refresh_cja())
-    # but has no reason to know this page also needs cja_dataviews, so it
-    # never sets it. Visiting Overview first (the app's default landing
-    # page) then clicking into CJA left cja_dataviews stuck at its initial
-    # None forever — "No data views found" even when data views exist —
-    # until a manual "Refresh from Adobe" click on this page specifically.
-    if st.session_state.cja_connections is None or st.session_state.cja_dataviews is None:
+    # Checks all three, not just cja_connections: the Overview page's
+    # "Refresh everything" populates cja_connections (via refresh_all() ->
+    # refresh_cja()) but has no reason to know this page also needs
+    # cja_dataviews/cja_projects, so it never sets them. Visiting Overview
+    # first (the app's default landing page) then clicking into CJA left
+    # cja_dataviews stuck at its initial None forever — "No data views
+    # found" even when data views exist — until a manual "Refresh from
+    # Adobe" click on this page specifically; cja_projects is added here
+    # from the start rather than repeating that same live bug a second time.
+    if st.session_state.cja_connections is None or st.session_state.cja_dataviews is None or st.session_state.cja_projects is None:
         _do_refresh()
 
 
@@ -25,14 +27,18 @@ def _do_refresh() -> None:
     try:
         st.session_state.cja_connections = refresh_cja()
         st.session_state.cja_dataviews = data.fetch_cja_dataviews()
+        # Cheap list-only call (no per-project definition fetch — that's
+        # SDR's Component Usage tab, deliberately opt-in for its N+1 cost)
+        # so it's safe to auto-load here alongside Connections/Data views.
+        st.session_state.cja_projects = data.fetch_cja_projects()
         st.session_state["_cja_error"] = None
     except Exception as exc:
         st.session_state["_cja_error"] = exc
 
 
 def render() -> None:
-    st.markdown("### CJA — Connections & data views")
-    st.caption("Customer Journey Analytics API: connection status and data views built on it.")
+    st.markdown("### CJA — Connections, data views & projects")
+    st.caption("Customer Journey Analytics API: connection status, data views built on each connection, and the Workspace projects built on those data views.")
 
     if refresh_button("Refresh from Adobe", key="cja_refresh"):
         _do_refresh()
@@ -47,6 +53,7 @@ def render() -> None:
 
     connections = st.session_state.cja_connections or []
     dataviews = st.session_state.cja_dataviews or []
+    projects = st.session_state.cja_projects or []
     st.caption(f"Last refreshed {format_timestamp(database.latest_checked_at('CJA'))}")
 
     st.markdown("#### Connections")
@@ -81,3 +88,25 @@ def render() -> None:
         ])
         st.dataframe(table, use_container_width=True, hide_index=True)
         st.download_button("Download as CSV", safe_csv(table), "cja_dataviews.csv", "text/csv")
+
+    st.divider()
+    st.markdown("#### Projects")
+    if not projects:
+        st.info("No CJA Workspace projects found.")
+    else:
+        names_by_dv = {d["dataview_id"]: d["name"] for d in dataviews}
+        table = pd.DataFrame([
+            {
+                "Project": p["name"],
+                "Data view": names_by_dv.get(p["dataview_id"], p["dataview_id"] or "—"),
+                "Owner": p["owner"] or "—",
+                "Created": p["created_at"] or "—",
+            }
+            for p in projects
+        ])
+        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.download_button("Download as CSV", safe_csv(table), "cja_projects.csv", "text/csv")
+        st.caption(
+            "For which dimensions/metrics/calculated metrics each project actually references (and which "
+            "ones on a data view are unused by any project), see the SDR page's Component Usage tab."
+        )

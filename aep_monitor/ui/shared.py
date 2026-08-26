@@ -37,6 +37,7 @@ DEFAULT_STATE = {
     "dc_rows": None,
     "cja_connections": None,
     "cja_dataviews": None,
+    "cja_projects": None,
     "audit_events": None,
     "quota_rows": None,
     "observability_metrics": None,

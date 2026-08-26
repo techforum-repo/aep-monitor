@@ -21,7 +21,7 @@ provisioning to cross-product monitoring.
 | **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
 | **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
 | **Data Collection** | Reactor | Extension review status, rule state, every library's build state (not just an assumed "latest" one — see limitations), environment build status (dev/staging/**production**), data element publish state |
-| **CJA** | CJA APIs | Connection status, data views built on each connection |
+| **CJA** | CJA APIs | Connection status, data views built on each connection, and Workspace projects built on those data views |
 | **Compare** | Flow Service + Observability + Schema Registry + Catalog + Reactor + CJA | Five comparison tabs — Sandboxes, Schemas, and Datasets are actual sandbox comparisons; DC Properties and CJA Data Views compare two picked entities instead (both are org-wide). Adobe has no built-in tool for any of these. |
 | **SDR** | CJA Dimensions/Metrics/Calculated Metrics/Projects + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), plus which components are actually referenced by a CJA Workspace project (and which aren't), pulled from reality instead of a hand-maintained doc that drifts |
 | **Audit Log** | Audit Query + Reactor Audit Events + CJA Audit Logs | Who changed what and when, across all three products (best-effort — see below) |
