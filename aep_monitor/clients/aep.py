@@ -66,6 +66,24 @@ class AEPClient(BaseAdobeClient):
                 result[flow_id] = []
         return result
 
+    async def list_flow_specs(self, http: httpx.AsyncClient, limit: int = 100) -> list[dict[str, Any]]:
+        """Resolves a flow's `flowSpec.id` (a connector-type UUID, e.g. "Data
+        Landing Zone" vs. a specific destination connector) to its display
+        name — the same "names, not IDs" resolver pattern as
+        fetch_schema_titles()/fetch_cja_dataview_titles() elsewhere in this
+        app. NOT verified against a live tenant (least-confirmed part of
+        this client, flagged the same way Audit Query/Observability are in
+        the README): Flow Specs is a documented Adobe resource, but the
+        exact list-response envelope and whether the item itself carries a
+        human-readable `name` (vs. only `id`/`version`) hasn't been checked
+        live. Defensive envelope handling mirrors list_flows()/list_runs()
+        above; parse_flow_spec() falls back to the id if `name` isn't
+        present, same convention as every other unresolved-reference
+        fallback in this app."""
+        data = await self.get(http, "/flowSpecs", params={"limit": limit})
+        items = data.get("items", data.get("data", [])) if isinstance(data, dict) else []
+        return items if isinstance(items, list) else []
+
     async def test_connection(self) -> bool:
         async with self._new_http_client() as http:
             await self.list_flows(http, limit=1)
@@ -73,13 +91,32 @@ class AEPClient(BaseAdobeClient):
 
 
 def parse_flow(flow: dict[str, Any]) -> dict[str, Any]:
+    flow_spec = safe_dict(flow.get("flowSpec"))
     return {
         "flow_id": str(flow.get("id") or ""),
         "flow_name": str(flow.get("name") or flow.get("id") or "(unnamed)"),
-        "state": str(flow.get("state") or safe_dict(flow.get("flowSpec")).get("name") or ""),
+        "state": str(flow.get("state") or flow_spec.get("name") or ""),
+        # Which connector this flow runs through (e.g. "Amazon S3", "Google
+        # Ads Data Connector") — the same flowSpec used above as a last-
+        # resort `state` fallback, kept as its own field so a page can show
+        # it as a distinct "Connector" column instead of only ever seeing it
+        # if `state` itself happened to be blank. This exists because
+        # GET /flows returns every flow undifferentiated — both inbound
+        # ingestion (source -> AEP dataset) and outbound activation (AEP
+        # segment -> an external destination) are the same object with no
+        # boolean "direction" field — so today this is the only way a human
+        # can tell them apart at a glance; see README's Known Limitations
+        # for why automatic ingestion-vs-activation classification isn't
+        # implemented (would need each connection's own connectionSpec
+        # resolved too, unverified).
+        "flow_spec_id": str(flow_spec.get("id") or ""),
         "created_at": str(flow.get("createdAt") or ""),
         "raw": flow,
     }
+
+
+def parse_flow_spec(item: dict[str, Any]) -> dict[str, Any]:
+    return {"flow_spec_id": str(item.get("id") or ""), "name": str(item.get("name") or "")}
 
 
 def parse_run(run: dict[str, Any]) -> dict[str, Any]:

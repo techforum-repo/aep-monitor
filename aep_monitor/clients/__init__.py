@@ -12,9 +12,11 @@ from .audit import AuditClient
 from .catalog import CatalogClient
 from .cja import CJAClient
 from .observability import ObservabilityClient
+from .query_service import QueryServiceClient
 from .quota import QuotaClient
 from .reactor import ReactorClient
 from .schema_registry import SchemaRegistryClient
+from .segmentation import SegmentationClient
 
 _credentials = (settings.adobe_client_id, settings.adobe_client_secret, settings.adobe_scopes, settings.adobe_org_id)
 
@@ -26,3 +28,5 @@ reactor_client = ReactorClient(*_credentials)
 cja_client = CJAClient(*_credentials)
 schema_registry_client = SchemaRegistryClient(*_credentials)
 catalog_client = CatalogClient(*_credentials)
+segmentation_client = SegmentationClient(*_credentials)
+query_service_client = QueryServiceClient(*_credentials)

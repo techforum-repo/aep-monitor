@@ -65,17 +65,45 @@ def refresh_cja() -> list[dict[str, Any]]:
 
 def refresh_quota() -> list[dict[str, Any]]:
     rows = data.fetch_quotas()
+    if rows:
+        database.record_quota_snapshots(rows)
     alerts.evaluate_quota(rows)
     get_logger().info("Quota refresh: %d quotas", len(rows))
     return rows
 
 
+def refresh_segments(sandbox: str | None = None) -> list[dict[str, Any]]:
+    rows = data.fetch_segment_jobs(sandbox=sandbox)
+    if rows:
+        database.record_segment_job_snapshots(rows)
+    alerts.evaluate_segments(rows)
+    get_logger().info("Segments refresh: %d jobs", len(rows))
+    return rows
+
+
+def refresh_query_service(sandbox: str | None = None) -> list[dict[str, Any]]:
+    rows = data.fetch_queries(sandbox=sandbox)
+    if rows:
+        database.record_query_snapshots(rows)
+    alerts.evaluate_query_service(rows)
+    get_logger().info("Query Service refresh: %d queries", len(rows))
+    return rows
+
+
 def refresh_all(sandbox: str | None = None) -> dict[str, list[dict[str, Any]]]:
     """Used by poller_cli.py (cron) and the Overview page's single "Refresh
-    everything" button. `sandbox` only affects the AEP leg — Data
-    Collection, CJA, and Quota are org-wide (see fetch_sandbox_comparison's
-    docstring in data.py)."""
-    return {"aep": refresh_aep(sandbox=sandbox), "dc": refresh_dc(), "cja": refresh_cja(), "quota": refresh_quota()}
+    everything" button. `sandbox` affects every leg that's actually
+    sandbox-scoped in Adobe's architecture (AEP, Segments, Query Service) —
+    Data Collection, CJA, and Quota are org-wide (see
+    fetch_sandbox_comparison's docstring in data.py)."""
+    return {
+        "aep": refresh_aep(sandbox=sandbox),
+        "dc": refresh_dc(),
+        "cja": refresh_cja(),
+        "quota": refresh_quota(),
+        "segments": refresh_segments(sandbox=sandbox),
+        "query_service": refresh_query_service(sandbox=sandbox),
+    }
 
 
 def refresh_entity_drift() -> dict[str, int]:

@@ -12,7 +12,10 @@ import streamlit as st
 from ..config import settings
 from ..errors import friendly_error
 
-PAGE_NAMES = ["Overview", "AEP Ingestion", "Datasets", "Data Collection", "CJA", "Compare", "SDR", "Audit Log", "Alerts", "Diagnostics", "Settings"]
+PAGE_NAMES = [
+    "Overview", "AEP Ingestion", "Datasets", "Data Collection", "CJA", "Segments", "Query Service",
+    "Compare", "SDR", "Audit Log", "Alerts", "Diagnostics", "Settings",
+]
 
 # Status colors follow a fixed, reserved palette (never reused for anything
 # else) and are always paired with an icon + label — never color alone.
@@ -40,6 +43,10 @@ DEFAULT_STATE = {
     "cja_projects": None,
     "audit_events": None,
     "quota_rows": None,
+    "segment_rows": None,
+    "segment_job_rows": None,
+    "query_rows": None,
+    "query_schedule_rows": None,
     "observability_metrics": None,
     "compare_rows": None,
     "sdr_dataviews": None,
@@ -110,7 +117,7 @@ def render_sidebar() -> str:
                 sandbox_options = [st.session_state["active_sandbox"], *sandbox_options]
             st.selectbox(
                 "AEP sandbox", sandbox_options, key="active_sandbox",
-                help="Affects AEP Ingestion, Audit Log, SDR's AEP section, and Overview's AEP card. "
+                help="Affects AEP Ingestion, Segments, Query Service, Audit Log, SDR's AEP section, and Overview's AEP card. "
                      "Data Collection, CJA, and Quota are org-wide, not sandbox-scoped.",
             )
     return page

@@ -26,7 +26,10 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 — this is the top-level CLI entry point
         print(f"Poll cycle failed: {exc}", file=sys.stderr)
         return 1
-    print(f"AEP flows: {len(results['aep'])}, DC properties: {len(results['dc'])}, CJA connections: {len(results['cja'])}")
+    print(
+        f"AEP flows: {len(results['aep'])}, DC properties: {len(results['dc'])}, CJA connections: {len(results['cja'])}, "
+        f"segment jobs: {len(results['segments'])}, queries: {len(results['query_service'])}"
+    )
 
     # Keeps "vs. last snapshot" drift baselines fresh for whatever entities
     # a Compare visit has already opted into tracking (see

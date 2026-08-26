@@ -32,6 +32,12 @@ def _do_refresh() -> None:
 def render() -> None:
     st.markdown("### AEP — Dataflow ingestion health")
     st.caption(f"Flow Service API: run status, record volume, and failures per dataflow. Sandbox: **{get_active_sandbox()}**.")
+    st.caption(
+        "⚠️ This list is every flow /flows returns, undifferentiated — both inbound ingestion (a source landing "
+        "data into AEP) and outbound activation (an AEP segment exporting to a destination) are the same object "
+        "with no direction field. The **Connector** column is the only way to tell them apart today; see README's "
+        "Known Limitations for why automatic classification isn't implemented."
+    )
 
     if refresh_button("Refresh from Adobe", key="aep_refresh"):
         _do_refresh()
@@ -54,6 +60,7 @@ def render() -> None:
     table = pd.DataFrame([
         {
             "Flow": r["flow_name"],
+            "Connector": r.get("connector_name") or "—",
             "State": r["state"],
             "Latest run": status_pill((r.get("latest_run") or {}).get("status", "no runs yet")),
             "Records in": (r.get("latest_run") or {}).get("records_in"),

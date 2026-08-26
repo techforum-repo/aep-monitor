@@ -18,10 +18,22 @@ def _iso(minutes_ago: int) -> str:
 # --- AEP Flow Service --------------------------------------------------------
 
 MOCK_FLOWS: list[dict[str, Any]] = [
-    {"id": "flow-web-events", "name": "Web SDK — Prod Events", "state": "enabled", "createdAt": _iso(60 * 24 * 40)},
-    {"id": "flow-crm-batch", "name": "CRM Customer Batch (S3)", "state": "enabled", "createdAt": _iso(60 * 24 * 90)},
-    {"id": "flow-mobile-events", "name": "Mobile SDK — Prod Events", "state": "enabled", "createdAt": _iso(60 * 24 * 20)},
-    {"id": "flow-loyalty-export", "name": "Loyalty Segment Export", "state": "disabled", "createdAt": _iso(60 * 24 * 10)},
+    {"id": "flow-web-events", "name": "Web SDK — Prod Events", "state": "enabled", "flowSpec": {"id": "spec-web-sdk"}, "createdAt": _iso(60 * 24 * 40)},
+    {"id": "flow-crm-batch", "name": "CRM Customer Batch (S3)", "state": "enabled", "flowSpec": {"id": "spec-s3"}, "createdAt": _iso(60 * 24 * 90)},
+    {"id": "flow-mobile-events", "name": "Mobile SDK — Prod Events", "state": "enabled", "flowSpec": {"id": "spec-mobile-sdk"}, "createdAt": _iso(60 * 24 * 20)},
+    # Deliberately a destination/activation flow, not an ingestion one — the
+    # same /flows endpoint returns both undifferentiated (see aep.py's
+    # parse_flow() docstring); its name alone reads like ingestion ("Export"
+    # sounds outbound but so did "CRM Batch" before you checked), which is
+    # exactly the ambiguity connector_name resolves.
+    {"id": "flow-loyalty-export", "name": "Loyalty Segment Export", "state": "disabled", "flowSpec": {"id": "spec-google-ads"}, "createdAt": _iso(60 * 24 * 10)},
+]
+
+MOCK_FLOW_SPECS: list[dict[str, Any]] = [
+    {"id": "spec-web-sdk", "name": "Adobe Experience Platform Web SDK"},
+    {"id": "spec-s3", "name": "Amazon S3"},
+    {"id": "spec-mobile-sdk", "name": "Adobe Experience Platform Mobile SDK"},
+    {"id": "spec-google-ads", "name": "Google Ads Data Connector"},
 ]
 
 MOCK_RUNS: dict[str, list[dict[str, Any]]] = {
@@ -449,6 +461,39 @@ MOCK_QUOTAS: list[dict[str, Any]] = [
     {"name": "datasetExpirationQuota", "description": "Datasets with an active expiration policy", "consumed": 42, "quota": 500},
     {"name": "dailyConsumerDeleteIdentitiesQuota", "description": "Privacy delete-identity requests today", "consumed": 1840, "quota": 2000},
     {"name": "monthlyConsumerDeleteIdentitiesQuota", "description": "Privacy delete-identity requests this month", "consumed": 12_400, "quota": 50_000},
+]
+
+
+# --- Segmentation Service (Unified Profile) -------------------------------------
+
+MOCK_SEGMENTS: list[dict[str, Any]] = [
+    {"id": "seg-high-value", "name": "High-Value Loyalty Members", "description": "Loyalty tier gold/platinum, active in 30d", "schema": {"name": "Loyalty Events"}},
+    {"id": "seg-cart-abandon", "name": "Cart Abandoners — 7d", "description": "Added to cart, no purchase within 7 days", "schema": {"name": "Web SDK Events"}},
+]
+
+MOCK_SEGMENT_JOBS: list[dict[str, Any]] = [
+    {
+        "id": "job-1", "segmentId": "seg-high-value", "status": "SUCCEEDED",
+        "metrics": {"segmentedProfileCount": 184_302},
+        "startTime": _iso(120), "endTime": _iso(95),
+    },
+    {
+        "id": "job-2", "segmentId": "seg-cart-abandon", "status": "FAILED",
+        "metrics": {},
+        "startTime": _iso(60), "endTime": _iso(55),
+    },
+]
+
+
+# --- Query Service ---------------------------------------------------------------
+
+MOCK_QUERIES: list[dict[str, Any]] = [
+    {"id": "q-1", "name": "Daily loyalty rollup", "state": "SUCCESS", "rowCount": 402_118, "elapsedTime": 14_200, "created": _iso(30), "scheduleId": "sch-1"},
+    {"id": "q-2", "name": None, "state": "FAILED", "errorMsg": "Query exceeded configured timeout", "rowCount": None, "elapsedTime": 601_000, "created": _iso(180)},
+]
+
+MOCK_SCHEDULES: list[dict[str, Any]] = [
+    {"id": "sch-1", "state": "ENABLED", "query": {"name": "Daily loyalty rollup"}},
 ]
 
 

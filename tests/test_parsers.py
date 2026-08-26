@@ -6,7 +6,7 @@ row shapes the UI/database/alerts layers depend on. Every field-name
 fallback here exists because a real Adobe response was observed (or
 documented) to vary; these tests pin that behavior down."""
 
-from aep_monitor.clients import aep, audit, catalog, cja, observability, quota, reactor, schema_registry
+from aep_monitor.clients import aep, audit, catalog, cja, observability, query_service, quota, reactor, schema_registry, segmentation
 
 
 # --- AEP Flow Service ---------------------------------------------------------
@@ -15,6 +15,22 @@ def test_parse_flow_falls_back_to_id_when_name_missing():
     flow = aep.parse_flow({"id": "flow-1", "state": "enabled"})
     assert flow["flow_name"] == "flow-1"
     assert flow["flow_id"] == "flow-1"
+
+
+def test_parse_flow_extracts_flow_spec_id_for_connector_resolution():
+    flow = aep.parse_flow({"id": "flow-1", "state": "enabled", "flowSpec": {"id": "spec-s3", "version": "1.0"}})
+    assert flow["flow_spec_id"] == "spec-s3"
+
+
+def test_parse_flow_flow_spec_id_is_empty_when_missing():
+    flow = aep.parse_flow({"id": "flow-1", "state": "enabled"})
+    assert flow["flow_spec_id"] == ""
+
+
+def test_parse_flow_spec_falls_back_to_empty_name_when_missing():
+    spec = aep.parse_flow_spec({"id": "spec-1"})
+    assert spec["flow_spec_id"] == "spec-1"
+    assert spec["name"] == ""
 
 
 def test_parse_run_extracts_status_records_and_falls_back_on_missing_summaries():
@@ -560,3 +576,69 @@ def test_parse_label_descriptor_normalizes_the_json_pointer_to_a_dotted_path():
 def test_parse_label_descriptor_defaults_to_no_labels_when_absent_or_malformed():
     assert schema_registry.parse_label_descriptor({"xdm:sourceProperty": "/a"})["labels"] == []
     assert schema_registry.parse_label_descriptor({"xdm:sourceProperty": "/a", "xdm:labels": "not-a-list"})["labels"] == []
+
+
+# --- Segmentation Service ---------------------------------------------------
+
+def test_parse_segment_extracts_schema_ref():
+    row = segmentation.parse_segment({"id": "seg-1", "name": "High Value", "description": "x", "schema": {"name": "Loyalty Events"}})
+    assert row["segment_id"] == "seg-1"
+    assert row["schema_ref"] == "Loyalty Events"
+
+
+def test_parse_segment_falls_back_to_id_when_name_missing():
+    row = segmentation.parse_segment({"id": "seg-1"})
+    assert row["name"] == "seg-1"
+    assert row["schema_ref"] == ""
+
+
+def test_parse_segment_job_flags_a_failed_job():
+    row = segmentation.parse_segment_job({"id": "job-1", "segmentId": "seg-1", "status": "FAILED"})
+    assert row["status"] == "failed"
+    assert row["is_bad"] is True
+
+
+def test_parse_segment_job_does_not_flag_a_succeeded_job():
+    row = segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "metrics": {"segmentedProfileCount": 100}})
+    assert row["is_bad"] is False
+    assert row["segmented_profile_count"] == 100
+
+
+def test_parse_segment_job_does_not_crash_when_metrics_is_not_an_object():
+    row = segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "metrics": "not-an-object"})
+    assert row["segmented_profile_count"] is None
+
+
+# --- Query Service -----------------------------------------------------------
+
+def test_parse_query_flags_a_failed_query():
+    row = query_service.parse_query({"id": "q-1", "name": "x", "state": "FAILED", "errorMsg": "timeout"})
+    assert row["is_bad"] is True
+    assert row["error_message"] == "timeout"
+
+
+def test_parse_query_does_not_flag_a_successful_query():
+    row = query_service.parse_query({"id": "q-1", "name": "x", "state": "SUCCESS"})
+    assert row["is_bad"] is False
+
+
+def test_parse_query_falls_back_to_ad_hoc_label_when_name_missing():
+    row = query_service.parse_query({"id": "q-1", "state": "SUCCESS"})
+    assert row["name"] == "q-1"
+
+
+def test_parse_query_detects_scheduled_via_schedule_id():
+    row = query_service.parse_query({"id": "q-1", "state": "SUCCESS", "scheduleId": "sch-1"})
+    assert row["is_scheduled"] is True
+
+
+def test_parse_schedule_reads_enabled_state_and_query_name():
+    row = query_service.parse_schedule({"id": "sch-1", "state": "ENABLED", "query": {"name": "Daily rollup"}})
+    assert row["enabled"] is True
+    assert row["name"] == "Daily rollup"
+
+
+def test_parse_schedule_defaults_to_disabled_and_id_as_name():
+    row = query_service.parse_schedule({"id": "sch-1"})
+    assert row["enabled"] is False
+    assert row["name"] == "sch-1"

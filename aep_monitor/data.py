@@ -10,16 +10,29 @@ place the two paths diverge.
 from typing import Any
 
 from . import database, diffing
-from .clients import aep_client, audit_client, catalog_client, cja_client, observability_client, quota_client, reactor_client, schema_registry_client
+from .clients import (
+    aep_client,
+    audit_client,
+    catalog_client,
+    cja_client,
+    observability_client,
+    query_service_client,
+    quota_client,
+    reactor_client,
+    schema_registry_client,
+    segmentation_client,
+)
 from .clients import aep as aep_api
 from .clients import audit as audit_api
 from .clients import catalog as catalog_api
 from .clients import cja as cja_api
 from .clients import mock
 from .clients import observability as observability_api
+from .clients import query_service as query_service_api
 from .clients import quota as quota_api
 from .clients import reactor as reactor_api
 from .clients import schema_registry as schema_registry_api
+from .clients import segmentation as segmentation_api
 from .config import settings
 from .utils import run_async
 
@@ -41,13 +54,31 @@ def fetch_aep(sandbox: str | None = None) -> list[dict[str, Any]]:
                 return flows, runs
         flows_raw, runs_by_flow = run_async(_load())
 
+    connector_names = fetch_flow_spec_titles()
     rows: list[dict[str, Any]] = []
     for flow_raw in flows_raw:
         flow = aep_api.parse_flow(flow_raw)
         runs = [aep_api.parse_run(r) for r in runs_by_flow.get(flow["flow_id"], [])]
         latest = runs[0] if runs else {}
-        rows.append({**flow, "latest_run": latest, "runs": runs})
+        connector_name = connector_names.get(flow["flow_spec_id"], flow["flow_spec_id"]) if flow["flow_spec_id"] else ""
+        rows.append({**flow, "connector_name": connector_name, "latest_run": latest, "runs": runs})
     return rows
+
+
+def fetch_flow_spec_titles() -> dict[str, str]:
+    """{flow_spec_id: connector display name} — e.g. resolves to "Amazon S3"
+    or "Google Ads Data Connector" instead of a raw flowSpec UUID, the same
+    "names, not IDs" resolver pattern as fetch_schema_titles(). See
+    clients/aep.py's list_flow_specs()/parse_flow_spec() docstrings for what
+    isn't yet confirmed live about this one."""
+    if settings.mock_mode:
+        raw = mock.MOCK_FLOW_SPECS
+    else:
+        async def _load():
+            async with aep_client._new_http_client() as http:  # noqa: SLF001
+                return await aep_client.list_flow_specs(http)
+        raw = run_async(_load())
+    return {spec["flow_spec_id"]: spec["name"] for spec in (aep_api.parse_flow_spec(item) for item in raw) if spec["flow_spec_id"] and spec["name"]}
 
 
 def fetch_dc() -> list[dict[str, Any]]:
@@ -396,6 +427,59 @@ def fetch_quotas() -> list[dict[str, Any]]:
                 return await quota_client.list_quotas(http)
         raw = run_async(_load())
     return [quota_api.parse_quota(item) for item in raw]
+
+
+def fetch_segments(sandbox: str | None = None) -> list[dict[str, Any]]:
+    if settings.mock_mode:
+        raw = mock.MOCK_SEGMENTS
+    else:
+        async def _load():
+            async with segmentation_client._new_http_client() as http:  # noqa: SLF001
+                return await segmentation_client.list_segments(http, sandbox=sandbox)
+        raw = run_async(_load())
+    return [segmentation_api.parse_segment(item) for item in raw]
+
+
+def fetch_segment_jobs(sandbox: str | None = None) -> list[dict[str, Any]]:
+    """Recent segment evaluation jobs, org/sandbox-wide (not filtered to one
+    segment) — one row per job, newest first per the API's documented sort.
+    A failed job here is very often the real cause of "the audience never
+    reached the destination," upstream of the activation flow itself (see
+    aep.py's parse_flow() docstring)."""
+    segment_names = {s["segment_id"]: s["name"] for s in fetch_segments(sandbox=sandbox)}
+    if settings.mock_mode:
+        raw = mock.MOCK_SEGMENT_JOBS
+    else:
+        async def _load():
+            async with segmentation_client._new_http_client() as http:  # noqa: SLF001
+                return await segmentation_client.list_segment_jobs(http, sandbox=sandbox)
+        raw = run_async(_load())
+    rows = [segmentation_api.parse_segment_job(item) for item in raw]
+    for row in rows:
+        row["segment_name"] = segment_names.get(row["segment_id"], row["segment_id"] or "—")
+    return rows
+
+
+def fetch_queries(sandbox: str | None = None) -> list[dict[str, Any]]:
+    if settings.mock_mode:
+        raw = mock.MOCK_QUERIES
+    else:
+        async def _load():
+            async with query_service_client._new_http_client() as http:  # noqa: SLF001
+                return await query_service_client.list_queries(http, sandbox=sandbox)
+        raw = run_async(_load())
+    return [query_service_api.parse_query(item) for item in raw]
+
+
+def fetch_query_schedules(sandbox: str | None = None) -> list[dict[str, Any]]:
+    if settings.mock_mode:
+        raw = mock.MOCK_SCHEDULES
+    else:
+        async def _load():
+            async with query_service_client._new_http_client() as http:  # noqa: SLF001
+                return await query_service_client.list_schedules(http, sandbox=sandbox)
+        raw = run_async(_load())
+    return [query_service_api.parse_schedule(item) for item in raw]
 
 
 def fetch_sandbox_comparison() -> list[dict[str, Any]]:

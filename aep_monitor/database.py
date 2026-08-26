@@ -63,6 +63,35 @@ def initialize() -> None:
           status TEXT NOT NULL DEFAULT ''
         )""")
         conn.execute("""
+        CREATE TABLE IF NOT EXISTS quota_snapshots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          checked_at TEXT NOT NULL,
+          quota_name TEXT NOT NULL,
+          consumed REAL,
+          quota REAL,
+          pct_used REAL
+        )""")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quota_snapshots_lookup ON quota_snapshots(quota_name, id DESC)"
+        )
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS segment_job_snapshots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          checked_at TEXT NOT NULL,
+          job_id TEXT NOT NULL,
+          segment_id TEXT NOT NULL DEFAULT '',
+          segment_name TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT ''
+        )""")
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS query_snapshots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          checked_at TEXT NOT NULL,
+          query_id TEXT NOT NULL,
+          name TEXT NOT NULL DEFAULT '',
+          state TEXT NOT NULL DEFAULT ''
+        )""")
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS entity_snapshots (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           entity_type TEXT NOT NULL,
@@ -153,6 +182,48 @@ def record_cja_snapshots(rows: list[dict[str, Any]]) -> None:
         conn.commit()
 
 
+def record_quota_snapshots(rows: list[dict[str, Any]]) -> None:
+    checked_at = _now()
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT INTO quota_snapshots(checked_at,quota_name,consumed,quota,pct_used) VALUES(?,?,?,?,?)",
+            [(checked_at, r["name"], r.get("consumed"), r.get("quota"), r.get("pct_used")) for r in rows],
+        )
+        conn.commit()
+
+
+def read_quota_history(quota_name: str | None = None, limit: int = 500) -> pd.DataFrame:
+    query = "SELECT checked_at,quota_name,consumed,quota,pct_used FROM quota_snapshots"
+    params: tuple[Any, ...] = ()
+    if quota_name:
+        query += " WHERE quota_name=?"
+        params = (quota_name,)
+    query += " ORDER BY id DESC LIMIT ?"
+    params = params + (limit,)
+    with _connect() as conn:
+        return pd.read_sql_query(query, conn, params=params)
+
+
+def record_segment_job_snapshots(rows: list[dict[str, Any]]) -> None:
+    checked_at = _now()
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT INTO segment_job_snapshots(checked_at,job_id,segment_id,segment_name,status) VALUES(?,?,?,?,?)",
+            [(checked_at, r["job_id"], r.get("segment_id", ""), r.get("segment_name", ""), r["status"]) for r in rows],
+        )
+        conn.commit()
+
+
+def record_query_snapshots(rows: list[dict[str, Any]]) -> None:
+    checked_at = _now()
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT INTO query_snapshots(checked_at,query_id,name,state) VALUES(?,?,?,?)",
+            [(checked_at, r["query_id"], r.get("name", ""), r["state"]) for r in rows],
+        )
+        conn.commit()
+
+
 def read_aep_history(flow_id: str | None = None, limit: int = 500) -> pd.DataFrame:
     query = "SELECT checked_at,flow_id,flow_name,status,records_in,records_out,records_failed FROM aep_flow_snapshots"
     params: tuple[Any, ...] = ()
@@ -190,7 +261,14 @@ def read_cja_history(connection_id: str | None = None, limit: int = 500) -> pd.D
 
 
 def latest_checked_at(source: str) -> str | None:
-    table = {"AEP": "aep_flow_snapshots", "Data Collection": "dc_property_snapshots", "CJA": "cja_connection_snapshots"}.get(source)
+    table = {
+        "AEP": "aep_flow_snapshots",
+        "Data Collection": "dc_property_snapshots",
+        "CJA": "cja_connection_snapshots",
+        "Quota": "quota_snapshots",
+        "Segments": "segment_job_snapshots",
+        "Query Service": "query_snapshots",
+    }.get(source)
     if not table:
         return None
     with _connect() as conn:
@@ -367,7 +445,10 @@ def sqlite_health() -> dict[str, Any]:
 
 
 def table_counts() -> dict[str, int]:
-    tables = ["aep_flow_snapshots", "dc_property_snapshots", "cja_connection_snapshots", "entity_snapshots", "alerts", "app_settings"]
+    tables = [
+        "aep_flow_snapshots", "dc_property_snapshots", "cja_connection_snapshots", "quota_snapshots",
+        "segment_job_snapshots", "query_snapshots", "entity_snapshots", "alerts", "app_settings",
+    ]
     with _connect() as conn:
         existing = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         return {t: int(conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]) for t in tables if t in existing}  # noqa: S608

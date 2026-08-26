@@ -17,6 +17,23 @@ def test_fetch_schema_titles_maps_schema_id_to_title():
     assert titles["https://ns.adobe.com/acmecorp/schemas/web-events"] == "Web SDK Events"
 
 
+def test_fetch_flow_spec_titles_maps_flow_spec_id_to_connector_name():
+    titles = data.fetch_flow_spec_titles()
+    assert titles["spec-s3"] == "Amazon S3"
+    assert titles["spec-google-ads"] == "Google Ads Data Connector"
+
+
+def test_fetch_aep_resolves_connector_name_onto_each_flow():
+    """The Connector column's data source — see aep_page.py and
+    clients/aep.py's parse_flow() docstring for why a flow's connector needs
+    surfacing at all (GET /flows doesn't distinguish ingestion from
+    outbound activation flows)."""
+    rows = data.fetch_aep()
+    by_id = {r["flow_id"]: r for r in rows}
+    assert by_id["flow-crm-batch"]["connector_name"] == "Amazon S3"
+    assert by_id["flow-loyalty-export"]["connector_name"] == "Google Ads Data Connector"
+
+
 def test_fetch_cja_calculated_metrics_filters_the_org_wide_list_client_side_by_dataview():
     """Calculated Metrics has no documented per-data-view endpoint (unlike
     dimensions/metrics) — fetch_cja_calculated_metrics() fetches the full
@@ -103,3 +120,28 @@ def test_aggregate_component_usage_matches_what_fetch_cja_component_usage_return
     manually on the raw references produces the identical result."""
     refs = data.fetch_cja_project_entity_references("dv-exec")
     assert data.aggregate_component_usage(refs) == data.fetch_cja_component_usage("dv-exec")
+
+
+def test_fetch_segments_returns_parsed_definitions():
+    segments = data.fetch_segments()
+    assert any(s["name"] == "High-Value Loyalty Members" for s in segments)
+
+
+def test_fetch_segment_jobs_resolves_segment_name_from_segment_id():
+    jobs = data.fetch_segment_jobs()
+    by_id = {j["job_id"]: j for j in jobs}
+    assert by_id["job-1"]["segment_name"] == "High-Value Loyalty Members"
+    assert by_id["job-2"]["is_bad"] is True
+
+
+def test_fetch_queries_returns_parsed_rows():
+    queries = data.fetch_queries()
+    by_id = {q["query_id"]: q for q in queries}
+    assert by_id["q-1"]["is_bad"] is False
+    assert by_id["q-2"]["is_bad"] is True
+
+
+def test_fetch_query_schedules_returns_parsed_rows():
+    schedules = data.fetch_query_schedules()
+    assert schedules[0]["enabled"] is True
+    assert schedules[0]["name"] == "Daily loyalty rollup"

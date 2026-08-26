@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     cja_projects_base_url: str = "https://cja.adobe.io/projects"
     aep_schema_registry_base_url: str = "https://platform.adobe.io/data/foundation/schemaregistry"
     aep_catalog_base_url: str = "https://platform.adobe.io/data/foundation/catalog"
+    # Segmentation Service lives under the same Unified Profile base as
+    # Profile access — confirmed via Adobe's published Unified Profile API
+    # docs; the exact response envelope for segment definitions/jobs is
+    # NOT independently confirmed live — see clients/segmentation.py.
+    aep_segmentation_base_url: str = "https://platform.adobe.io/data/core/ups"
+    # Query Service — see clients/query_service.py for the same
+    # not-confirmed-live caveat as Segmentation above.
+    aep_query_service_base_url: str = "https://platform.adobe.io/data/foundation/query"
 
     http_timeout: float = 30.0
     # Adobe doesn't publish one shared per-product rate limit; this is a
@@ -89,6 +97,21 @@ class Settings(BaseSettings):
     # A data-lifecycle quota (dataset expiration, consumer-delete identities)
     # alerts once consumed/quota reaches this percentage.
     alert_quota_threshold_pct: float = 80.0
+    # A quota alerts early, before crossing alert_quota_threshold_pct, once
+    # its own recent history projects it'll hit 100% within this many days
+    # at its current linear rate of change — catching "about to become a
+    # hard failure" while there's still lead time to act on a governance
+    # quota (dataset expiration, consumer-delete identities), not just after
+    # the threshold's already been crossed. Set to 0 to disable trend
+    # projection and keep only the plain threshold alert above.
+    alert_quota_trend_days: int = 14
+    # Dead-man's-switch: a source alerts here if its last recorded snapshot
+    # is older than this, regardless of whether the poller that would
+    # normally refresh it is even still running (see alerts.evaluate_freshness()'s
+    # docstring for why this can't just be "the poller notices it's stuck").
+    # A source that's never been polled at all doesn't count as stale — this
+    # only fires once something has actually gone quiet.
+    alert_stale_after_hours: float = 6.0
     slack_webhook_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

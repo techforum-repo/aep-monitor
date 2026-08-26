@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import plotly.graph_objects as go
 import streamlit as st
 
-from .. import database
+from .. import alerts, database
+from ..config import settings
 from ..poller import refresh_all
 from .shared import format_timestamp, get_active_sandbox, mark_cache_sandbox, refresh_button, render_friendly_error, sandbox_changed_since_cache
+
+_BLUE = "#2a78d6"
 
 
 def _ensure_loaded() -> None:
@@ -25,9 +29,19 @@ def _do_refresh() -> None:
     st.session_state.dc_rows = results["dc"]
     st.session_state.cja_connections = results["cja"]
     st.session_state.quota_rows = results["quota"]
+    st.session_state.segment_job_rows = results["segments"]
+    st.session_state.query_rows = results["query_service"]
 
 
 def render() -> None:
+    # Cheap (a handful of SELECT MAX queries), read-only, and independent of
+    # the refresh button below — this is what lets the dashboard notice a
+    # dead poller_cli.py cron job the next time a human opens this page,
+    # instead of only ever checking freshness as a side effect of polling
+    # (which can't catch the poller itself having stopped — see
+    # alerts.evaluate_freshness()'s docstring).
+    alerts.evaluate_freshness()
+
     col1, col2 = st.columns([1, 5])
     with col1:
         if refresh_button("Refresh everything", key="overview_refresh"):
@@ -48,17 +62,21 @@ def render() -> None:
     elif warning:
         st.warning(f"🟡 {warning} warning{'s' if warning != 1 else ''} open — see the Alerts page.")
     else:
-        st.success("🟢 No open alerts across AEP, Data Collection, CJA, or quotas.")
+        st.success("🟢 No open alerts across AEP, Data Collection, CJA, quotas, or the monitor's own data freshness.")
 
     aep_rows = st.session_state.aep_rows or []
     dc_rows = st.session_state.dc_rows or []
     cja_rows = st.session_state.cja_connections or []
     quota_rows = st.session_state.quota_rows or []
+    segment_job_rows = st.session_state.get("segment_job_rows") or []
+    query_rows = st.session_state.get("query_rows") or []
 
     aep_failed = sum(1 for r in aep_rows if (r.get("latest_run") or {}).get("status") in {"failed", "error"})
     dc_issues = sum(r.get("extension_issue_count", 0) + r.get("library_issue_count", 0) for r in dc_rows)
     cja_issues = sum(1 for r in cja_rows if r.get("has_issue"))
     quota_issues = sum(1 for r in quota_rows if r.get("is_high"))
+    segment_job_failures = sum(1 for r in segment_job_rows if r.get("is_bad"))
+    query_failures = sum(1 for r in query_rows if r.get("is_bad"))
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("AEP dataflows", len(aep_rows), delta=f"-{aep_failed} failing" if aep_failed else "all healthy", delta_color="inverse" if aep_failed else "off")
@@ -69,6 +87,20 @@ def render() -> None:
     c3.caption(f"Last refreshed {format_timestamp(database.latest_checked_at('CJA'))}")
     c4.metric("Data lifecycle quotas", len(quota_rows), delta=f"-{quota_issues} near limit" if quota_issues else "all healthy", delta_color="inverse" if quota_issues else "off")
     c4.caption("Dataset expiration & consumer-delete identity quotas")
+
+    c5, c6 = st.columns(2)
+    c5.metric(
+        "Segment jobs (recent)", len(segment_job_rows),
+        delta=f"-{segment_job_failures} failed" if segment_job_failures else "all healthy",
+        delta_color="inverse" if segment_job_failures else "off",
+    )
+    c5.caption(f"Sandbox **{get_active_sandbox()}** · refreshed {format_timestamp(database.latest_checked_at('Segments'))} · often the real cause behind a broken destination sync")
+    c6.metric(
+        "Query Service (recent)", len(query_rows),
+        delta=f"-{query_failures} failed" if query_failures else "all healthy",
+        delta_color="inverse" if query_failures else "off",
+    )
+    c6.caption(f"Last refreshed {format_timestamp(database.latest_checked_at('Query Service'))}")
 
     st.divider()
     st.markdown("#### Recent open alerts")
@@ -93,3 +125,22 @@ def render() -> None:
             st.progress(min(row["pct_used"] / 100, 1.0), text=label)
             if row["description"]:
                 st.caption(row["description"])
+            history = database.read_quota_history(quota_name=row["name"], limit=200)
+            if len(history) >= 2:
+                with st.expander(f"History & trend — {row['name']}"):
+                    history = history.sort_values("checked_at")
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=history["checked_at"], y=history["pct_used"], mode="lines+markers",
+                        name="% used", line=dict(color=_BLUE, width=2), marker=dict(size=7),
+                    ))
+                    fig.update_layout(
+                        height=220, margin=dict(l=10, r=10, t=10, b=10),
+                        yaxis_title="% used", yaxis_range=[0, max(100, history["pct_used"].max())], xaxis_title=None,
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption(
+                        f"A rising trend projected to cross 100% within {settings.alert_quota_trend_days} days "
+                        "raises an early warning on the Alerts page, separately from the plain "
+                        f"{settings.alert_quota_threshold_pct:.0f}% threshold alert above."
+                    )

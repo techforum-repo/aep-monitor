@@ -17,11 +17,13 @@ provisioning to cross-product monitoring.
 | Page | API | Signal |
 |---|---|---|
 | **Overview** | all of the below | One screen: open-alert banner, a summary card per product, and a data-lifecycle quota breakdown |
-| **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend |
+| **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend — plus a **Connector** column resolving each flow's `flowSpec` to a display name, since `/flows` returns inbound ingestion and outbound activation flows undifferentiated (see Known Limitations) |
 | **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
 | **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
 | **Data Collection** | Reactor | Extension review status, rule state, every library's build state (not just an assumed "latest" one — see limitations), environment build status (dev/staging/**production**), data element publish state |
 | **CJA** | CJA APIs | Connection status, data views built on each connection, and Workspace projects built on those data views |
+| **Segments** | Segmentation Service (Unified Profile) | Segment definitions and recent segment evaluation jobs — the layer between ingestion and activation that was previously unwatched; a failed job here is very often the real cause of "the audience never reached the destination" (see Known Limitations — newest, least-verified integration) |
+| **Query Service** | Query Service | Recent ad-hoc/scheduled queries against the data lake, and which queries are on a schedule (see Known Limitations — same caveat as Segments) |
 | **Compare** | Flow Service + Observability + Schema Registry + Catalog + Reactor + CJA | Five comparison tabs — Sandboxes, Schemas, and Datasets are actual sandbox comparisons; DC Properties and CJA Data Views compare two picked entities instead (both are org-wide). Adobe has no built-in tool for any of these. |
 | **SDR** | CJA Dimensions/Metrics/Calculated Metrics/Projects + Schema Registry (fields + Descriptors) | A live, auto-generated Solution Design Reference — browsable/exportable CJA data-view components and flattened AEP schema fields (with any data-governance labels applied per field), plus which components are actually referenced by a CJA Workspace project (and which aren't), pulled from reality instead of a hand-maintained doc that drifts |
 | **Audit Log** | Audit Query + Reactor Audit Events + CJA Audit Logs | Who changed what and when, across all three products (best-effort — see below) |
@@ -34,13 +36,13 @@ provisioning to cross-product monitoring.
 A sidebar dropdown (populated from `ADOBE_SANDBOXES`, or just `ADOBE_SANDBOX`
 alone if that's not set) picks the **active AEP sandbox** for the whole app —
 Overview's AEP card, AEP Ingestion (including its Observability Insights
-section), Datasets, Audit Log, and SDR's AEP schema section all follow it,
-refetching automatically when it changes. It's session-only — it never
-writes back to `.env`. Data Collection, CJA, and the Quota page are org-wide
-in Adobe's architecture, so they ignore it entirely; Compare's Sandboxes,
-Schemas, and Datasets tabs ignore it too, since all three let you pick
-sandboxes explicitly and are inherently multi-sandbox already via
-`ADOBE_SANDBOXES`.
+section), Segments, Query Service, Datasets, Audit Log, and SDR's AEP schema
+section all follow it, refetching automatically when it changes. It's
+session-only — it never writes back to `.env`. Data Collection, CJA, and the
+Quota page are org-wide in Adobe's architecture, so they ignore it entirely;
+Compare's Sandboxes, Schemas, and Datasets tabs ignore it too, since all
+three let you pick sandboxes explicitly and are inherently multi-sandbox
+already via `ADOBE_SANDBOXES`.
 
 Diagnostics' connection tests are a known exception: they always test
 against the `.env`-configured default sandbox, not whichever one is
@@ -188,7 +190,21 @@ An alert is generated the moment a refresh finds:
 - an AEP flow's latest run failed, or exceeded `ALERT_FAILED_RECORDS_THRESHOLD` failed records,
 - a Data Collection extension with review status `rejected`/`failed`, *any* of a property's libraries in a `failed`/`rejected` build state, or its **production** environment's build status `failed` (dev/staging failures aren't alerted — only production),
 - a CJA connection marked `disabled` or `deleted` — the only two health signals Adobe's API actually exposes (`isDisabled`/`isDeleted`; there's no status enum, unlike the other products above),
-- a data-lifecycle quota reaching `ALERT_QUOTA_THRESHOLD_PCT` percent consumed.
+- a Segmentation Service segment job in a failed state — often the real, upstream cause of "the audience never reached the destination," ahead of the activation flow itself,
+- a Query Service query in a failed/cancelled state,
+- a data-lifecycle quota reaching `ALERT_QUOTA_THRESHOLD_PCT` percent consumed, **or** — separately — projected to reach 100% within `ALERT_QUOTA_TREND_DAYS` days at its own recent linear rate of change (from the same history the Overview page charts), so a slow-moving governance quota gets flagged with lead time to act instead of only after the threshold's already crossed. Set `ALERT_QUOTA_TREND_DAYS=0` to disable the trend alert and keep only the plain threshold one.
+
+Separately from all of the above, **`alerts.evaluate_freshness()`** is a
+dead-man's-switch: if a source's last recorded snapshot is older than
+`ALERT_STALE_AFTER_HOURS` (default 6), it raises a `Monitor`-sourced alert —
+independent of whether the poller that would normally refresh that source
+is even still running. This can't be evaluated as part of polling itself
+(code that only runs *as part of* a poll can never notice the poll has
+stopped happening at all), so it runs on a read path instead — every time
+the Overview or Alerts page is opened — so the dashboard self-diagnoses
+"have I gone quiet?" the next time a human actually looks, rather than
+silently showing stale data as if it were current. A source that's never
+been polled at all (fresh install) is skipped, not flagged.
 
 Adobe also has its own native alerting on top of Observability Insights
 metrics (UI notification bell, forwardable to Slack via an App Builder
@@ -204,6 +220,52 @@ once per alert, not on every subsequent poll while it's still open.
 
 ## Known limitations / things to verify against your tenant
 
+- **AEP Ingestion doesn't distinguish inbound ingestion from outbound
+  activation flows.** `GET /flows` (`clients/aep.py`'s `list_flows()`)
+  returns every flow undifferentiated — both a source landing data into a
+  dataset and an AEP segment activating out to an external destination
+  (Meta, Google Ads, email, …) are the same object, with no boolean
+  direction field. This matters more than it might look: a broken
+  destination sync is often the single most business-visible failure in
+  the whole stack (a marketing team notices immediately when an audience
+  doesn't land), and until this was addressed it had **no distinct
+  visibility at all** — a failed activation flow just looked like a failed
+  ingestion flow. The fix implemented is a visibility one, not a
+  classification one: each flow's `flowSpec.id` is resolved to a
+  human-readable connector name (`fetch_flow_spec_titles()` in `data.py`,
+  via a new `list_flow_specs()` call — `GET /flowSpecs`) and shown as its
+  own **Connector** column (e.g. "Amazon S3" vs. "Google Ads Data
+  Connector"), so a human can tell ingestion and activation flows apart at
+  a glance, and a failed-run alert's message includes the connector name.
+  **Not implemented:** automatic boolean classification (ingestion vs.
+  activation) — that would need each flow's connection ids resolved to
+  their own `connectionSpec` too, which hasn't been verified against a
+  live tenant. Also not confirmed live: whether `GET /flowSpecs` returns a
+  human-readable `name` at all (vs. only `id`/`version`) — if the Connector
+  column shows raw ids instead of names on your tenant, that's why; the
+  underlying `flow_id`/`state` columns are unaffected either way.
+- **Segmentation Service and Query Service** (`clients/segmentation.py`,
+  `clients/query_service.py`) are the newest, least-verified integrations
+  in this app — same caveat class as Audit Query/Observability Insights
+  below, added to close a real coverage gap rather than a peripheral one:
+  this app already watched ingestion (Flow Service) and consumption (CJA
+  connections/data views/projects), but nothing watched the layer in
+  between that actually *produces* what an activation flow exports — a
+  failed segment job is very often the real upstream cause of "the
+  audience never reached the destination." Confirmed via Adobe's published
+  docs: both live under real, documented endpoints (Segmentation under the
+  Unified Profile base `platform.adobe.io/data/core/ups`, Query Service
+  under `platform.adobe.io/data/foundation/query`). **Not confirmed
+  live:** the exact list-response envelope key for either
+  (`segments`/`items`/`data` for segment definitions; `records`/`items`/
+  `data` for segment jobs and queries — handled defensively, matching the
+  established pattern elsewhere in this app), the job/query status
+  vocabulary beyond the obvious `SUCCEEDED`/`FAILED` values, and whether
+  `metrics.segmentedProfileCount` is the actual field name on a segment
+  job. Both pages' raw-response expanders show exactly what Adobe returned
+  — check those against what `parse_segment_job()`/`parse_query()` assume
+  before trusting this app's numbers on a new tenant. Both clients send
+  `x-sandbox-name` defensively (same reasoning as Quota/Audit Query below).
 - **Audit Query API** parsing (`aep_monitor/clients/audit.py`) is the least
   exercised part of this app — its exact query-parameter and response
   contract wasn't verified against a live tenant while building this.
@@ -528,7 +590,9 @@ aep_monitor/
     base.py                    Shared HTTP plumbing (pacing, auth headers, errors)
     aep.py, reactor.py,        One client + parse_*() per product
     cja.py, audit.py,
-    observability.py, quota.py
+    observability.py, quota.py,
+    segmentation.py,
+    query_service.py
     mock.py                    Sample data, shaped like raw API responses
   ui/                        One module per Streamlit page
 tests/                     pytest — business logic (unit) + tests/test_app_pages.py (Streamlit AppTest)

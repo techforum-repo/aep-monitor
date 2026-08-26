@@ -3,7 +3,18 @@ from __future__ import annotations
 import streamlit as st
 
 from .. import database
-from ..clients import aep_client, audit_client, catalog_client, cja_client, observability_client, quota_client, reactor_client, schema_registry_client
+from ..clients import (
+    aep_client,
+    audit_client,
+    catalog_client,
+    cja_client,
+    observability_client,
+    query_service_client,
+    quota_client,
+    reactor_client,
+    schema_registry_client,
+    segmentation_client,
+)
 from ..config import settings
 from ..logging_setup import LOG_PATH
 from ..utils import run_async
@@ -12,6 +23,8 @@ _CLIENTS = {
     "AEP (Flow Service)": ("AEP", aep_client),
     "Data Collection (Reactor)": ("Data Collection", reactor_client),
     "CJA": ("CJA", cja_client),
+    "Segmentation Service": ("Segmentation", segmentation_client),
+    "Query Service": ("Query Service", query_service_client),
     "Audit Query": ("Audit", audit_client),
     "Observability Insights": ("Observability", observability_client),
     "Data Lifecycle Quota": ("Quota", quota_client),

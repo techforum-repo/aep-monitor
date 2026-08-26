@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import streamlit as st
 
-from .. import database
+from .. import alerts, database
 
 
 def render() -> None:
+    alerts.evaluate_freshness()  # see overview.py's call for why this runs here too, not just there.
     st.markdown("### Alerts")
     st.caption(
         "Generated from the latest refresh of each product's page (or from poller_cli.py on a schedule). "

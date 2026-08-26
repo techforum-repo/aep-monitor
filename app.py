@@ -14,7 +14,9 @@ from aep_monitor.ui import (
     diagnostics_page,
     aep_page,
     overview,
+    query_service_page,
     sdr_page,
+    segments_page,
     settings_page,
 )
 from aep_monitor.ui.shared import CUSTOM_CSS, init_session_state, render_hero, render_sidebar
@@ -34,6 +36,8 @@ PAGES = {
     "Datasets": datasets_page.render,
     "Data Collection": dc_page.render,
     "CJA": cja_page.render,
+    "Segments": segments_page.render,
+    "Query Service": query_service_page.render,
     "Compare": compare_page.render,
     "SDR": sdr_page.render,
     "Audit Log": audit_page.render,

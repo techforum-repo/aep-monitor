@@ -94,6 +94,28 @@ def test_quota_client_sends_sandbox_name_header(monkeypatch):
     assert headers["x-sandbox-name"] == "prod"
 
 
+def test_segmentation_client_sends_sandbox_name_header(monkeypatch):
+    """Sent defensively, same reasoning as quota.py/audit.py above — not
+    confirmed as required from docs, but the identical gap has broken a
+    real endpoint in this app before, and Profile/Segmentation is plausibly
+    sandbox-scoped the same way datasets and schemas are."""
+    from aep_monitor.clients.segmentation import SegmentationClient
+    from aep_monitor.config import settings
+    monkeypatch.setattr(settings, "adobe_sandbox", "prod")
+    client = SegmentationClient("cid", "secret", "scope", "org")
+    headers = asyncio.run(client._headers(http=None))
+    assert headers["x-sandbox-name"] == "prod"
+
+
+def test_query_service_client_sends_sandbox_name_header(monkeypatch):
+    from aep_monitor.clients.query_service import QueryServiceClient
+    from aep_monitor.config import settings
+    monkeypatch.setattr(settings, "adobe_sandbox", "prod")
+    client = QueryServiceClient("cid", "secret", "scope", "org")
+    headers = asyncio.run(client._headers(http=None))
+    assert headers["x-sandbox-name"] == "prod"
+
+
 def test_schema_registry_client_requests_label_descriptors_with_the_confirmed_filter(monkeypatch):
     """Confirmed *live*, not from docs (Adobe's own reference doc for this
     endpoint doesn't document a schema/type filter at all, and doesn't

@@ -79,6 +79,19 @@ def test_aep_snapshot_round_trips_through_history(temp_db):
     assert history.iloc[0]["records_in"] == 100
 
 
+def test_quota_snapshot_round_trips_through_history(temp_db):
+    database.record_quota_snapshots([{"name": "q1", "consumed": 10, "quota": 100, "pct_used": 10.0}])
+    history = database.read_quota_history(quota_name="q1")
+    assert len(history) == 1
+    assert history.iloc[0]["pct_used"] == 10.0
+
+
+def test_latest_checked_at_covers_quota(temp_db):
+    assert database.latest_checked_at("Quota") is None
+    database.record_quota_snapshots([{"name": "q1", "consumed": 10, "quota": 100, "pct_used": 10.0}])
+    assert database.latest_checked_at("Quota") is not None
+
+
 def test_latest_checked_at_is_none_before_any_snapshot(temp_db):
     assert database.latest_checked_at("AEP") is None
     database.record_aep_snapshots([{"flow_id": "f1", "flow_name": "x", "status": "success", "records_in": 1, "records_out": 1, "records_failed": 0}])
