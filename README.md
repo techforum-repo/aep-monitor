@@ -51,13 +51,22 @@ currently active in the switcher.
 Every page shows a human name — a flow, property, connection, data view,
 schema, or dataset's actual name/title — never a raw Adobe ID, including
 where a reference crosses entities (a dataset's schema binding, a data
-view's connection). `data.py` exposes small `fetch_*_titles()`-style
-resolvers for exactly this (e.g. `fetch_schema_titles()`) so a page never
-has to show an unresolved ID while it waits on a separate lookup; every
-resolver falls back to something readable (a shortened ID, never a full
-raw URL) if a reference can't be resolved (e.g. a schema in a different
-container, or deleted since the reference was created) rather than
-showing nothing.
+view's connection, or — the CJA page's Projects table — a two-hop chain
+from project to data view to connection). `data.py` exposes small
+`fetch_*_titles()`-style resolvers for exactly this (e.g.
+`fetch_schema_titles()`) so a page never has to show an unresolved ID
+while it waits on a separate lookup; every resolver falls back to
+something readable (a shortened ID, never a full raw URL) if a reference
+can't be resolved (e.g. a schema in a different container, or deleted
+since the reference was created) rather than showing nothing. The CJA
+page's cross-entity lookups (`_resolve_name()` in `ui/cja_page.py`) go a
+step further and flag that fallback visibly — `"<id> (unresolved)"`
+rather than a bare ID — since a real, expected cause there is a
+permission gap (Connections needs product administration to see the org's
+full list; Data Views needs the credential's own Product Profile
+permissions — see Known Limitations below) rather than a deleted
+reference, and a flagged fallback makes that distinguishable from an
+actual name at a glance instead of blending in.
 
 ## Compare
 

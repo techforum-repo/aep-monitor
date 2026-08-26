@@ -582,6 +582,30 @@ def test_cja_page_shows_projects_with_resolved_dataview_names():
     # not the opaque imsUserId/ownerId this endpoint returns by default.
     assert "Jordan Lee" in set(proj_table["Owner"])
     assert not any("@techacct.adobe.com" in str(v) or "@f6de294463f5897c495fa8.e" in str(v) for v in proj_table["Owner"])
+    # Two-hop resolution (project -> data view -> connection): every mock
+    # project's data view belongs to the same connection.
+    assert set(proj_table["Connection"]) == {"Web + Mobile Unified"}
+
+
+def test_cja_page_flags_an_unresolvable_reference_instead_of_a_bare_id(monkeypatch):
+    """A project/data view can reference a connection or data view this
+    credential can't itself see (Connections needs product administration,
+    Data Views needs the credential's own Product Profile permissions —
+    both real, expected access-model gaps, not bugs). Regression: that
+    used to fall back to a bare id indistinguishable from an actual
+    (coincidentally id-shaped) name; it must now be visibly flagged."""
+    from aep_monitor.clients import mock as mock_module
+    monkeypatch.setattr(mock_module, "MOCK_CONNECTIONS", [])  # nothing to resolve dv-exec's connection against
+
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.radio(key="navigation").set_value("CJA").run()
+
+    assert at.exception == []
+    dv_table = next(df.value for df in at.get("dataframe") if "Data view" in df.value.columns)
+    assert all(str(v).endswith("(unresolved)") for v in dv_table["Connection"])
+    proj_table = next(df.value for df in at.get("dataframe") if "Project" in df.value.columns)
+    assert all(str(v).endswith("(unresolved)") for v in proj_table["Connection"])
 
 
 def test_cja_page_shows_data_views_and_projects_after_visiting_overview_first():

@@ -9,6 +9,21 @@ from ..utils import safe_csv
 from .shared import format_timestamp, refresh_button, render_friendly_error, status_pill
 
 
+def _resolve_name(lookup: dict[str, str], entity_id: str) -> str:
+    """Resolve an id to a display name via `lookup`, falling back to the
+    raw id — but visibly flagged as unresolved rather than blending in as
+    if it were an actual name. A real, expected case (not just a bug):
+    Connections needs product administration to see the full org-wide
+    list and Data Views needs the credential's own Product Profile
+    permissions (see README Known Limitations) — a connection/data view a
+    project or data view references but this credential can't itself see
+    falls back here, distinguishably, instead of silently."""
+    if not entity_id:
+        return "—"
+    name = lookup.get(entity_id)
+    return name if name else f"{entity_id} (unresolved)"
+
+
 def _ensure_loaded() -> None:
     # Checks all three, not just cja_connections: the Overview page's
     # "Refresh everything" populates cja_connections (via refresh_all() ->
@@ -83,7 +98,7 @@ def render() -> None:
     else:
         names_by_conn = {c["connection_id"]: c["name"] for c in connections}
         table = pd.DataFrame([
-            {"Data view": d["name"], "Connection": names_by_conn.get(d["connection_id"], d["connection_id"] or "—"), "Owner": d["owner"] or "—"}
+            {"Data view": d["name"], "Connection": _resolve_name(names_by_conn, d["connection_id"]), "Owner": d["owner"] or "—"}
             for d in dataviews
         ])
         st.dataframe(table, use_container_width=True, hide_index=True)
@@ -100,10 +115,20 @@ def render() -> None:
         )
     else:
         names_by_dv = {d["dataview_id"]: d["name"] for d in dataviews}
+        # Recomputed here rather than reusing the Data views section's own
+        # local — that block only runs (and only defines this) when
+        # `dataviews` is non-empty, and Projects can still have rows to
+        # show even then.
+        conn_id_by_dv = {d["dataview_id"]: d["connection_id"] for d in dataviews}
+        names_by_conn = {c["connection_id"]: c["name"] for c in connections}
         table = pd.DataFrame([
             {
                 "Project": p["name"],
-                "Data view": names_by_dv.get(p["dataview_id"], p["dataview_id"] or "—"),
+                "Data view": _resolve_name(names_by_dv, p["dataview_id"]),
+                # Two-hop resolution (project -> data view -> connection) —
+                # unresolved at either hop still falls back distinguishably
+                # rather than silently showing a raw id.
+                "Connection": _resolve_name(names_by_conn, conn_id_by_dv.get(p["dataview_id"], "")),
                 "Owner": p["owner"] or "—",
                 "Created": p["created_at"] or "—",
             }
