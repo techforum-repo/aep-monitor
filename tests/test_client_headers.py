@@ -132,9 +132,12 @@ def test_cja_client_requests_projects_with_include_type_all(monkeypatch):
     """Confirmed via Adobe's own docs: /projects' default scope is
     narrower than "every project the org has" (`all` is documented as the
     admin-scoped option) — the same owner-only-by-default pattern CJA
-    Connections has. Regression coverage for the exact request shape:
-    list_projects() and get_project() must both send includeType=all,
-    not rely on whatever the unscoped default happens to return."""
+    Connections has. Also confirmed via docs: `ownerFullName` is a valid
+    expansion value on the *list* endpoint specifically, resolving every
+    project's owner to a display name in the one bulk call rather than a
+    per-project or per-user lookup. Regression coverage for the exact
+    request shape: list_projects() and get_project() must both send
+    includeType=all, not rely on whatever the unscoped default returns."""
     from aep_monitor.clients.cja import CJAClient
 
     captured: dict = {}
@@ -149,6 +152,7 @@ def test_cja_client_requests_projects_with_include_type_all(monkeypatch):
     asyncio.run(client.list_projects(http=None))
 
     assert captured["kwargs"]["params"]["includeType"] == "all"
+    assert captured["kwargs"]["params"]["expansion"] == "ownerFullName"
 
     async def _fake_request_single(self, http, method, url, **kwargs):
         captured["url"] = url
@@ -159,4 +163,4 @@ def test_cja_client_requests_projects_with_include_type_all(monkeypatch):
     asyncio.run(client.get_project(http=None, project_id="proj1"))
 
     assert captured["kwargs"]["params"]["includeType"] == "all"
-    assert captured["kwargs"]["params"]["expansion"] == "definition"
+    assert captured["kwargs"]["params"]["expansion"] == "definition,ownerFullName"

@@ -334,6 +334,16 @@ once per alert, not on every subsequent poll while it's still open.
   without CJA product administration may still get a restricted or empty
   list back even with it, same known tradeoff as Connections, not a new
   failure mode (the CJA page's "no projects found" message says as much).
+  `list_projects()` also sends `expansion=ownerFullName` — a project's
+  `owner.name` came back `null` in a real response (only the opaque
+  `ownerId`/`imsUserId` were populated), and this expansion value is
+  documented for the list endpoint specifically as resolving it to a
+  display name, in the one bulk call rather than a per-project or
+  per-user lookup. **Not confirmed** which field the resolved name
+  actually lands in from a real populated example — `parse_project()`
+  checks a top-level `ownerFullName` (matching the expansion's own name)
+  first, then falls back to `owner.name` (the field that came back null
+  without it), then the opaque id if neither is populated.
   Every referenced component (a date range, the data view itself, and —
   expected but not confirmed from a populated example — dimensions/
   metrics/calculated metrics/segments) is tagged `__entity__: true`

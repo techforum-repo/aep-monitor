@@ -578,6 +578,10 @@ def test_cja_page_shows_projects_with_resolved_dataview_names():
     # Resolved to the data view's name, not its raw id.
     assert "Executive Dashboard View" in set(proj_table["Data view"])
     assert not any(str(v).startswith("dv-") for v in proj_table["Data view"])
+    # Resolved to the owner's display name (via expansion=ownerFullName),
+    # not the opaque imsUserId/ownerId this endpoint returns by default.
+    assert "Jordan Lee" in set(proj_table["Owner"])
+    assert not any("@techacct.adobe.com" in str(v) or "@f6de294463f5897c495fa8.e" in str(v) for v in proj_table["Owner"])
 
 
 def test_cja_page_shows_data_views_and_projects_after_visiting_overview_first():

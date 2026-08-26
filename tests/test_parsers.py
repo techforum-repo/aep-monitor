@@ -200,6 +200,29 @@ def test_parse_project_extracts_data_id_as_dataview_id():
     assert row["owner"] == "jordan.lee@acme.com"
 
 
+def test_parse_project_resolves_owner_full_name_over_the_opaque_id():
+    """expansion=ownerFullName is meant to resolve a project's owner to a
+    display name instead of the opaque imsUserId/ownerId this endpoint
+    returns by default (confirmed live: owner.name came back null without
+    it) — pins that the top-level ownerFullName field (matching the
+    expansion's own name) takes priority over the opaque id when present."""
+    row = cja.parse_project({
+        "id": "proj1", "ownerFullName": "Jordan Lee",
+        "owner": {"ownerId": "391C5A0C536B86680A490D44@techacct.adobe.com", "name": None},
+    })
+    assert row["owner"] == "Jordan Lee"
+
+
+def test_parse_project_falls_back_to_owner_name_when_no_top_level_owner_full_name():
+    """Not confirmed from a real populated example which field
+    expansion=ownerFullName actually lands in — owner.name is the other
+    plausible spot (it's the field that came back null without the
+    expansion), checked as a second attempt before falling back to the
+    opaque id."""
+    row = cja.parse_project({"id": "proj1", "owner": {"name": "Jordan Lee", "ownerId": "391C5A0C..."}})
+    assert row["owner"] == "Jordan Lee"
+
+
 def test_parse_project_falls_back_to_id_when_name_is_absent():
     row = cja.parse_project({"id": "proj1"})
     assert row["name"] == "proj1"

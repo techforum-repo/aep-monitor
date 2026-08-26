@@ -105,10 +105,18 @@ class CJAClient(BaseAdobeClient):
         # administration may still get a restricted (or empty) list back
         # with `all`, which is the same known, already-documented tradeoff
         # as Connections, not a new failure mode.
+        #
+        # `expansion=ownerFullName` resolves each project's owner to a
+        # display name instead of the opaque imsUserId/ownerId this
+        # endpoint returns by default (confirmed live: `owner.name` came
+        # back null without it) — documented as a valid expansion value
+        # for this list endpoint specifically, so this resolves every
+        # project's owner name in the one bulk list call rather than
+        # needing a per-project or per-user lookup.
         result: list[dict[str, Any]] = []
         page = 0
         while True:
-            data = await self._request(http, "GET", settings.cja_projects_base_url, params={"page": page, "limit": limit, "includeType": "all"})
+            data = await self._request(http, "GET", settings.cja_projects_base_url, params={"page": page, "limit": limit, "includeType": "all", "expansion": "ownerFullName"})
             items = data if isinstance(data, list) else []
             result.extend(items)
             if len(items) < limit or page >= _PROJECTS_PAGE_SAFETY_CAP:
@@ -124,8 +132,11 @@ class CJAClient(BaseAdobeClient):
         # `definition` field at all). includeType=all included for the
         # same reason as list_projects() above, and because Adobe's docs
         # describe this endpoint as accepting the same query params.
+        # ownerFullName included alongside definition for the same reason
+        # as list_projects() above, even though nothing currently parses
+        # this call's result through parse_project() to use it.
         url = f"{settings.cja_projects_base_url}/{quote(project_id, safe='')}"
-        data = await self._request(http, "GET", url, params={"expansion": "definition", "includeType": "all"})
+        data = await self._request(http, "GET", url, params={"expansion": "definition,ownerFullName", "includeType": "all"})
         return data if isinstance(data, dict) else {}
 
     async def test_connection(self) -> bool:
@@ -219,11 +230,22 @@ def parse_calculated_metric(item: dict[str, Any]) -> dict[str, Any]:
 
 def parse_project(item: dict[str, Any]) -> dict[str, Any]:
     owner = safe_dict(item.get("owner"))
+    # A real response's own `owner.name` came back null (confirmed live —
+    # Adobe doesn't populate it by default), and `owner.ownerId`/
+    # `imsUserId` are opaque ids, not display names, for most account
+    # types. `expansion=ownerFullName` (list_projects() below) is meant to
+    # resolve this — documented as a valid expansion value for this
+    # endpoint, but not confirmed from a real populated example which
+    # field it lands in, so both plausible spots are checked: a top-level
+    # `ownerFullName` (matching the expansion's own name) and `owner.name`
+    # (the field that came back null without it). Falls back to the raw
+    # id if neither is populated, same as before this was added.
+    owner_name = item.get("ownerFullName") or owner.get("name") or owner.get("ownerId") or owner.get("imsUserId") or ""
     return {
         "project_id": str(item.get("id") or ""),
         "name": str(item.get("name") or item.get("id") or "(unnamed)"),
         "dataview_id": str(item.get("dataId") or ""),
-        "owner": str(owner.get("ownerId") or owner.get("imsUserId") or ""),
+        "owner": str(owner_name),
         "created_at": str(item.get("created") or ""),
         "raw": item,
     }

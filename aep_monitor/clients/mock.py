@@ -207,10 +207,16 @@ MOCK_CALCULATED_METRICS: list[dict[str, Any]] = [
 # Shaped like the confirmed real /projects list response — a bare array,
 # not a {"content": [...]} envelope like every other CJA list endpoint
 # (see clients/cja.py's list_projects() docstring).
+# owner.name is null and owner.ownerId/imsUserId are opaque ids — matching
+# a real response without `expansion=ownerFullName` — with the resolved
+# display name only appearing in the top-level `ownerFullName` field
+# expansion adds (see list_projects()'s docstring for why that field's
+# placement isn't fully confirmed from a real populated example; parse_project()
+# checks both plausible spots defensively).
 MOCK_PROJECTS: list[dict[str, Any]] = [
-    {"id": "proj-exec-1", "name": "Executive Weekly Report", "description": "", "type": "project", "dataId": "dv-exec", "owner": {"imsUserId": "jordan.lee@acme.com", "ownerId": "jordan.lee@acme.com", "name": None, "type": "imsUser"}, "created": _iso(60 * 24 * 20)},
-    {"id": "proj-exec-2", "name": "Conversion Deep Dive", "description": "", "type": "project", "dataId": "dv-exec", "owner": {"imsUserId": "sam.ortiz@acme.com", "ownerId": "sam.ortiz@acme.com", "name": None, "type": "imsUser"}, "created": _iso(60 * 24 * 5)},
-    {"id": "proj-mktg-1", "name": "Campaign Performance", "description": "", "type": "project", "dataId": "dv-mktg", "owner": {"imsUserId": "sam.ortiz@acme.com", "ownerId": "sam.ortiz@acme.com", "name": None, "type": "imsUser"}, "created": _iso(60 * 24 * 10)},
+    {"id": "proj-exec-1", "name": "Executive Weekly Report", "description": "", "type": "project", "dataId": "dv-exec", "owner": {"imsUserId": "391C5A0C536B86680A490D44@techacct.adobe.com", "ownerId": "391C5A0C536B86680A490D44@techacct.adobe.com", "name": None, "type": "imsUser"}, "ownerFullName": "Jordan Lee", "created": _iso(60 * 24 * 20)},
+    {"id": "proj-exec-2", "name": "Conversion Deep Dive", "description": "", "type": "project", "dataId": "dv-exec", "owner": {"imsUserId": "EDDA4A2E6995C6800A495F90@f6de294463f5897c495fa8.e", "ownerId": "EDDA4A2E6995C6800A495F90@f6de294463f5897c495fa8.e", "name": None, "type": "imsUser"}, "ownerFullName": "Sam Ortiz", "created": _iso(60 * 24 * 5)},
+    {"id": "proj-mktg-1", "name": "Campaign Performance", "description": "", "type": "project", "dataId": "dv-mktg", "owner": {"imsUserId": "EDDA4A2E6995C6800A495F90@f6de294463f5897c495fa8.e", "ownerId": "EDDA4A2E6995C6800A495F90@f6de294463f5897c495fa8.e", "name": None, "type": "imsUser"}, "ownerFullName": "Sam Ortiz", "created": _iso(60 * 24 * 10)},
 ]
 
 
