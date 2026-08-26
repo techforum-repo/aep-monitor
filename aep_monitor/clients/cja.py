@@ -92,10 +92,23 @@ class CJAClient(BaseAdobeClient):
         # get_project() below for the one that does); this is just id/name/
         # dataId/owner/created, cheap enough to fetch for every project
         # before deciding which ones are worth a full definition fetch.
+        #
+        # `includeType=all` is passed explicitly — confirmed via Adobe's
+        # own docs that this endpoint's default scope is narrower than
+        # "every project the org has" (`all` is documented as the
+        # admin-scoped option, `shared` a lesser one), the same
+        # owner-only-by-default pattern CJA Connections has (see
+        # parse_connection()'s docstring / README). Without it this
+        # credential could silently under-report projects the same way
+        # Connections silently under-reported connections before that gap
+        # was found — a technical account without CJA product
+        # administration may still get a restricted (or empty) list back
+        # with `all`, which is the same known, already-documented tradeoff
+        # as Connections, not a new failure mode.
         result: list[dict[str, Any]] = []
         page = 0
         while True:
-            data = await self._request(http, "GET", settings.cja_projects_base_url, params={"page": page, "limit": limit})
+            data = await self._request(http, "GET", settings.cja_projects_base_url, params={"page": page, "limit": limit, "includeType": "all"})
             items = data if isinstance(data, list) else []
             result.extend(items)
             if len(items) < limit or page >= _PROJECTS_PAGE_SAFETY_CAP:
@@ -108,9 +121,11 @@ class CJAClient(BaseAdobeClient):
         # single-project GET — not on list_projects() above, even though
         # Adobe's docs describe expansion as available on both (confirmed
         # live: requesting it on the list call came back with no
-        # `definition` field at all).
+        # `definition` field at all). includeType=all included for the
+        # same reason as list_projects() above, and because Adobe's docs
+        # describe this endpoint as accepting the same query params.
         url = f"{settings.cja_projects_base_url}/{quote(project_id, safe='')}"
-        data = await self._request(http, "GET", url, params={"expansion": "definition"})
+        data = await self._request(http, "GET", url, params={"expansion": "definition", "includeType": "all"})
         return data if isinstance(data, dict) else {}
 
     async def test_connection(self) -> bool:

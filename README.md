@@ -328,6 +328,12 @@ once per alert, not on every subsequent poll while it's still open.
   requested instead. `expansion=definition` only populates a project's
   `definition` on the single-project `GET .../projects/{id}` call, not the
   list call, despite Adobe's docs describing it as available on both.
+  Both calls also send `includeType=all` — confirmed via Adobe's own docs
+  as the admin-scoped option (the default is narrower), the same
+  owner-only-by-default pattern CJA Connections has; a technical account
+  without CJA product administration may still get a restricted or empty
+  list back even with it, same known tradeoff as Connections, not a new
+  failure mode (the CJA page's "no projects found" message says as much).
   Every referenced component (a date range, the data view itself, and —
   expected but not confirmed from a populated example — dimensions/
   metrics/calculated metrics/segments) is tagged `__entity__: true`

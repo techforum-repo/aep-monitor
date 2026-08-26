@@ -126,3 +126,37 @@ def test_schema_registry_client_requests_label_descriptors_with_the_confirmed_fi
     assert captured["kwargs"]["params"]["limit"] == 300
     assert captured["extra_headers"]["Accept"] == "application/vnd.adobe.xdm+json"
     assert captured["extra_headers"]["x-sandbox-name"] == "prod"
+
+
+def test_cja_client_requests_projects_with_include_type_all(monkeypatch):
+    """Confirmed via Adobe's own docs: /projects' default scope is
+    narrower than "every project the org has" (`all` is documented as the
+    admin-scoped option) — the same owner-only-by-default pattern CJA
+    Connections has. Regression coverage for the exact request shape:
+    list_projects() and get_project() must both send includeType=all,
+    not rely on whatever the unscoped default happens to return."""
+    from aep_monitor.clients.cja import CJAClient
+
+    captured: dict = {}
+
+    async def _fake_request(self, http, method, url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return []
+
+    monkeypatch.setattr(CJAClient, "_request", _fake_request)
+    client = CJAClient("cid", "secret", "scope", "org")
+    asyncio.run(client.list_projects(http=None))
+
+    assert captured["kwargs"]["params"]["includeType"] == "all"
+
+    async def _fake_request_single(self, http, method, url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return {}
+
+    monkeypatch.setattr(CJAClient, "_request", _fake_request_single)
+    asyncio.run(client.get_project(http=None, project_id="proj1"))
+
+    assert captured["kwargs"]["params"]["includeType"] == "all"
+    assert captured["kwargs"]["params"]["expansion"] == "definition"

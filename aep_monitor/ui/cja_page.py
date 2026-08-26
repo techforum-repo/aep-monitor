@@ -92,7 +92,12 @@ def render() -> None:
     st.divider()
     st.markdown("#### Projects")
     if not projects:
-        st.info("No CJA Workspace projects found.")
+        st.info(
+            "No CJA Workspace projects found. `includeType=all` is requested (Adobe's own docs describe it as "
+            "the admin-scoped option), so — same as Connections above — this credential's technical account "
+            "may need CJA product administration to see the org's full project list rather than just what it "
+            "owns itself."
+        )
     else:
         names_by_dv = {d["dataview_id"]: d["name"] for d in dataviews}
         table = pd.DataFrame([
