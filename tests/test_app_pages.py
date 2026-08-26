@@ -88,6 +88,29 @@ def test_sdr_page_component_usage_tab_is_opt_in_then_shows_real_usage():
     assert "not referenced by any of its bound projects" in caption_text
 
 
+def test_sdr_page_component_usage_debug_expander_shows_raw_unfiltered_references():
+    """Added after "used in projects shows zero for everything" turned out
+    to need a live round-trip to diagnose (same lesson as the schema field
+    labels saga) — this expander exists so the next such mismatch is
+    diagnosable from inside the app: every raw extracted reference,
+    unfiltered (including the ReportSuite/DateRange ones the aggregated
+    view excludes), so a real id can be compared directly against a known
+    component's own id without needing another round-trip."""
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.radio(key="navigation").set_value("SDR").run()
+    at.button(key="sdr_load_component_usage").click().run()
+    assert at.exception == []
+
+    expander_labels = [e.label for e in at.expander]
+    assert any("Raw entity references" in label and "7 found" in label for label in expander_labels)
+    raw_table = next(df.value for df in at.get("dataframe") if "Id" in df.value.columns and "Project" in df.value.columns)
+    assert len(raw_table) == 7
+    assert "dv-exec" in set(raw_table["Id"])  # the ReportSuite entity, visible here though excluded from the aggregated table
+    caption_text = " ".join(c.value for c in at.caption)
+    assert "2 project(s) bound to this data view" in caption_text
+
+
 def test_sdr_page_schema_fields_table_shows_data_governance_labels():
     """The schema fields table's "Labels" column — DULE labels (e.g.
     core/I2) fetched from the Schema Registry's Descriptors API, per field

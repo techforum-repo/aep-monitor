@@ -193,24 +193,30 @@ def fetch_cja_projects() -> list[dict[str, Any]]:
     return [cja_api.parse_project(item) for item in raw]
 
 
-def fetch_cja_component_usage(dataview_id: str) -> dict[str, dict[str, Any]]:
-    """{component_id: {"name", "type", "projects": [project names]}} for
-    every dimension/metric/calculated-metric/etc. referenced by any CJA
-    Workspace project bound to this data view — lets SDR's Component Usage
-    view show what's actually *in use* (and, by omission, what isn't)
-    rather than just what's defined. One fetch_cja_projects() call plus one
-    get_project(expansion=definition) call per project bound to this data
-    view — N+1 by nature (Adobe's projects endpoint has no "give me every
-    definition in one call" option), so this is deliberately NOT
-    auto-fetched on page load; the UI gates it behind an explicit button.
-    Filtered to this data view client-side — fetch_cja_projects() already
-    returns every project org-wide, and Adobe's docs don't confirm a
-    dataId filter query param for the list endpoint to push that filtering
-    server-side instead. Excludes "ReportSuite"/"DateRange" entity types —
-    confirmed live (from a real project's definition) as panel *framing*
-    (which data view / date range a panel uses), not a shared component in
-    the sense this view is meant to surface."""
-    _NON_COMPONENT_TYPES = {"ReportSuite", "DateRange"}
+_NON_COMPONENT_ENTITY_TYPES = {"ReportSuite", "DateRange"}
+
+
+def fetch_cja_project_entity_references(dataview_id: str) -> list[dict[str, Any]]:
+    """Every raw {id, type, name, project_id, project_name} entity
+    reference extracted from every CJA Workspace project bound to this
+    data view — the unaggregated form fetch_cja_component_usage() builds
+    its usage map from below, exposed on its own for the SDR page's debug
+    view. Whether nothing shows up as "used" is because no projects were
+    found for this data view, because projects were found but nothing in
+    their definitions was tagged `__entity__` (the extraction assumption
+    itself may not hold for a populated project — only an empty test one
+    was available to confirm the marker against), or because entities
+    *were* found but their `id` values don't match a known component's own
+    id — this function's raw output is what tells those apart; the
+    aggregated usage map alone can't.
+
+    One fetch_cja_projects() call plus one get_project(expansion=definition)
+    call per project bound to this data view — N+1 by nature (Adobe's
+    projects endpoint has no "give me every definition in one call"
+    option). Filtered to this data view client-side — fetch_cja_projects()
+    already returns every project org-wide, and Adobe's docs don't confirm
+    a dataId filter query param for the list endpoint to push that
+    filtering server-side instead."""
     projects = [p for p in fetch_cja_projects() if p["dataview_id"] == dataview_id]
 
     if settings.mock_mode:
@@ -225,16 +231,46 @@ def fetch_cja_component_usage(dataview_id: str) -> dict[str, dict[str, Any]]:
                 return result
         definitions = run_async(_load())
 
-    usage: dict[str, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
     for p in projects:
         definition = definitions.get(p["project_id"]) or {}
         for ref in cja_api.extract_entity_references(definition):
-            if not ref["id"] or ref["type"] in _NON_COMPONENT_TYPES:
-                continue
-            entry = usage.setdefault(ref["id"], {"name": ref["name"], "type": ref["type"], "projects": []})
-            if p["name"] not in entry["projects"]:
-                entry["projects"].append(p["name"])
+            rows.append({**ref, "project_id": p["project_id"], "project_name": p["name"]})
+    return rows
+
+
+def aggregate_component_usage(entity_references: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """{component_id: {"name", "type", "projects": [project names]}},
+    built from fetch_cja_project_entity_references()'s raw rows — a plain
+    function (not fetching anything itself) so a caller that already has
+    the raw references (e.g. the SDR page's debug view, which needs them
+    for display anyway) can derive the aggregated usage map from the same
+    fetch instead of triggering a second N+1 round of API calls. Excludes
+    "ReportSuite"/"DateRange" entity types — confirmed live (from a real
+    project's definition) as panel *framing* (which data view / date
+    range a panel uses), not a shared component in the sense this view is
+    meant to surface."""
+    usage: dict[str, dict[str, Any]] = {}
+    for ref in entity_references:
+        if not ref["id"] or ref["type"] in _NON_COMPONENT_ENTITY_TYPES:
+            continue
+        entry = usage.setdefault(ref["id"], {"name": ref["name"], "type": ref["type"], "projects": []})
+        if ref["project_name"] not in entry["projects"]:
+            entry["projects"].append(ref["project_name"])
     return usage
+
+
+def fetch_cja_component_usage(dataview_id: str) -> dict[str, dict[str, Any]]:
+    """{component_id: {"name", "type", "projects": [project names]}} for
+    every dimension/metric/calculated-metric/etc. referenced by any CJA
+    Workspace project bound to this data view — lets SDR's Component Usage
+    view show what's actually *in use* (and, by omission, what isn't)
+    rather than just what's defined. Fetches once via
+    fetch_cja_project_entity_references() and aggregates via
+    aggregate_component_usage() above; a caller that also needs the raw
+    per-reference rows (e.g. for a debug view) should call those two
+    separately instead of this, to avoid fetching twice."""
+    return aggregate_component_usage(fetch_cja_project_entity_references(dataview_id))
 
 
 def fetch_schemas(sandbox: str | None = None) -> list[dict[str, Any]]:

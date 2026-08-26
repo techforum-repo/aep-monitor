@@ -77,3 +77,29 @@ def test_fetch_cja_component_usage_excludes_report_suite_and_date_range_noise():
 
 def test_fetch_cja_component_usage_returns_empty_for_a_dataview_with_no_projects():
     assert data.fetch_cja_component_usage("not-a-real-dataview") == {}
+
+
+def test_fetch_cja_project_entity_references_returns_raw_unfiltered_rows():
+    """The debug-view function behind Component Usage's "Raw entity
+    references" expander — unlike fetch_cja_component_usage(), this
+    includes ReportSuite/DateRange entities and tags each row with which
+    project it came from, so a real mismatch is diagnosable without
+    needing a live round-trip."""
+    refs = data.fetch_cja_project_entity_references("dv-exec")
+    assert len(refs) == 7  # 2 projects: 4 refs (incl. ReportSuite) + 3 refs
+    assert any(r["type"] == "ReportSuite" for r in refs)  # excluded from the aggregated view, present here
+    ids_by_project = {}
+    for r in refs:
+        ids_by_project.setdefault(r["project_name"], set()).add(r["id"])
+    assert "cm-aov" in ids_by_project["Conversion Deep Dive"]
+    assert "cm-aov" not in ids_by_project["Executive Weekly Report"]
+
+
+def test_aggregate_component_usage_matches_what_fetch_cja_component_usage_returns():
+    """aggregate_component_usage() is the pure aggregation step
+    fetch_cja_component_usage() itself is now built from (refactored so
+    the SDR page's debug view can reuse one fetch for both the raw and
+    aggregated display, instead of fetching twice) — pins that running it
+    manually on the raw references produces the identical result."""
+    refs = data.fetch_cja_project_entity_references("dv-exec")
+    assert data.aggregate_component_usage(refs) == data.fetch_cja_component_usage("dv-exec")

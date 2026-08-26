@@ -131,9 +131,10 @@ def _render_component_usage(selected_id: str, entry: dict) -> None:
         if st.button("Load project usage", key="sdr_load_component_usage"):
             with st.spinner("Fetching every project bound to this data view..."):
                 try:
-                    usage_cache[selected_id] = {"usage": data.fetch_cja_component_usage(selected_id), "error": None}
+                    references = data.fetch_cja_project_entity_references(selected_id)
+                    usage_cache[selected_id] = {"references": references, "usage": data.aggregate_component_usage(references), "error": None}
                 except Exception as exc:
-                    usage_cache[selected_id] = {"usage": {}, "error": exc}
+                    usage_cache[selected_id] = {"references": [], "usage": {}, "error": exc}
             st.rerun()
         return
 
@@ -143,6 +144,10 @@ def _render_component_usage(selected_id: str, entry: dict) -> None:
             del usage_cache[selected_id]
             st.rerun()
         return
+
+    references = usage_entry["references"]
+    project_count = len({r["project_id"] for r in references}) if references else len({p["project_id"] for p in data.fetch_cja_projects() if p["dataview_id"] == selected_id})
+    st.caption(f"{project_count} project(s) bound to this data view · {len(references)} raw component reference(s) found across them.")
 
     usage = usage_entry["usage"]
     known = [
@@ -183,6 +188,24 @@ def _render_component_usage(selected_id: str, entry: dict) -> None:
                 for s in stale
             ])
             st.dataframe(stale_table, use_container_width=True, hide_index=True)
+
+    with st.expander(f"Raw entity references ({len(references)} found, unfiltered)"):
+        st.caption(
+            "Every `__entity__`-tagged reference this app found in the raw project definitions, before any "
+            "matching or filtering — including ReportSuite/DateRange framing entities and anything whose id "
+            "didn't match a known component. If every component above shows 0 usage despite projects that "
+            "clearly reference some, compare an id here against a component's own id on the Dimensions/"
+            "Metrics/Calculated Metrics tabs — a mismatch there (not an empty list here) is what a wrong "
+            "assumption about Adobe's real entity shape would look like; an empty list here instead would "
+            "mean the extraction itself found nothing to work with."
+        )
+        if references:
+            st.dataframe(
+                pd.DataFrame([{"Id": r["id"], "Type": r["type"], "Name": r["name"], "Project": r["project_name"]} for r in references]),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.caption("No entity references extracted at all.")
 
 
 def _render_aep_section() -> None:
