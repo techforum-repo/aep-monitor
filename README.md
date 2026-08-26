@@ -290,15 +290,49 @@ once per alert, not on every subsequent poll while it's still open.
   Adobe returned; check those against what `parse_segment_job()`/
   `parse_schedule()` assume before trusting a new tenant's numbers.
 
-  **Segmentation Service is still unconfirmed against a live tenant** —
-  the exact list-response envelope key (`segments`/`items`/`data` for
-  segment definitions; `records`/`items`/`data` for segment jobs, handled
-  defensively), the job status vocabulary beyond the obvious
-  `SUCCEEDED`/`FAILED` values, and whether `metrics.segmentedProfileCount`
-  is the actual field name on a segment job are all best-effort.
+  **Segmentation Service is now confirmed against Adobe's own published
+  example responses too** (Segment Definitions and Segment Jobs both) — and
+  it caught a real, live-breaking bug, not just shape mismatches: the
+  Segment Jobs list call's `sort` parameter was `"desc:createdAt"` (both
+  the order and the attribute name backwards) — Adobe's documented syntax
+  is `"[attribute]:[asc|desc]"`, e.g. `"creationTime:desc"`. Unlike most of
+  the guesses elsewhere in this document, a malformed `sort` isn't
+  something Adobe degrades gracefully on — it's rejected outright with a
+  hard `HTTP 400 "The expression used is invalid"`, which surfaced as the
+  entire Segments page (and, before `refresh_all()`'s per-leg isolation
+  fix just below, the entire Overview page) failing outright. Also
+  corrected: a job's segment reference is a `segments` **list** of
+  `{segmentId: ...}` objects, not a top-level `segmentId`/`definitionId`
+  string; its timestamps are `creationTime`/`updateTime` in **epoch
+  milliseconds**, not ISO `startTime`/`endTime` strings; and the
+  profile-count field is `metrics.segmentedProfileCounter` (with the
+  "er"), not `segmentedProfileCount`. Confirmed envelope keys: `"segments"`
+  for definitions, `"children"` (HAL-style, with `_page`/`_links`) for
+  jobs — both handled with defensive fallbacks in case a different
+  tenant/version varies.
 
   Both clients send `x-sandbox-name` defensively (same reasoning as
   Quota/Audit Query below).
+
+- **`refresh_all()` now isolates each of its six legs' failures
+  independently** (`poller.py`) — found via the Segmentation bug above,
+  which exposed a real design gap: one leg raising used to abort the whole
+  function before it could return *anything*, silently losing every other
+  leg's already-fetched data too. Concretely: Quota's own fetch had
+  already succeeded, but its result never reached the Overview page,
+  because Segments raised before the surrounding dict literal finished
+  building — so a specific "Data lifecycle quotas: No quota data" symptom
+  was actually a downstream consequence of an unrelated Segments bug, not
+  a Quota bug at all (the Quota client's request/response shape was
+  already correct, confirmed via Adobe's own published example — see
+  above). Each leg now runs in its own try/except; a failure contributes
+  an empty list plus its exception under a returned `"errors"` key
+  (`ui/overview.py` shows a per-product warning instead of losing the
+  page; `poller_cli.py` prints each failure and exits non-zero if any leg
+  failed, for cron-failure monitoring). A failed leg also never records a
+  fresh snapshot, so `alerts.evaluate_freshness()`'s dead-man's-switch
+  independently catches a *persistent* failure on its own, on top of the
+  immediate feedback above.
 - **Audit Query API** parsing (`aep_monitor/clients/audit.py`) is the least
   exercised part of this app — its exact query-parameter and response
   contract wasn't verified against a live tenant while building this.

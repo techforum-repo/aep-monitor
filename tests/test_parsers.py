@@ -593,13 +593,16 @@ def test_parse_segment_falls_back_to_id_when_name_missing():
 
 
 def test_parse_segment_job_flags_a_failed_job():
-    row = segmentation.parse_segment_job({"id": "job-1", "segmentId": "seg-1", "status": "FAILED"})
+    row = segmentation.parse_segment_job({"id": "job-1", "segments": [{"segmentId": "seg-1"}], "status": "FAILED"})
     assert row["status"] == "failed"
     assert row["is_bad"] is True
+    assert row["segment_id"] == "seg-1"
 
 
 def test_parse_segment_job_does_not_flag_a_succeeded_job():
-    row = segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "metrics": {"segmentedProfileCount": 100}})
+    """Confirmed live: the profile-count field is "segmentedProfileCounter"
+    (with the "er"), not "segmentedProfileCount" as originally guessed."""
+    row = segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "metrics": {"segmentedProfileCounter": 100}})
     assert row["is_bad"] is False
     assert row["segmented_profile_count"] == 100
 
@@ -607,6 +610,21 @@ def test_parse_segment_job_does_not_flag_a_succeeded_job():
 def test_parse_segment_job_does_not_crash_when_metrics_is_not_an_object():
     row = segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "metrics": "not-an-object"})
     assert row["segmented_profile_count"] is None
+
+
+def test_parse_segment_job_does_not_crash_when_segments_is_missing_or_malformed():
+    assert segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED"})["segment_id"] == ""
+    assert segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "segments": "not-a-list"})["segment_id"] == ""
+    assert segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "segments": []})["segment_id"] == ""
+
+
+def test_parse_segment_job_converts_epoch_millisecond_timestamps():
+    """Confirmed live: creationTime/updateTime are epoch milliseconds, not
+    ISO strings like startTime/endTime elsewhere in this app — originally
+    guessed as ISO strings under the wrong field names entirely."""
+    row = segmentation.parse_segment_job({"id": "job-1", "status": "SUCCEEDED", "creationTime": 1700000000000, "updateTime": 1700000060000})
+    assert row["started_at"].startswith("2023-11-14")
+    assert row["ended_at"].startswith("2023-11-14")
 
 
 # --- Query Service -----------------------------------------------------------

@@ -5,10 +5,18 @@ import streamlit as st
 
 from .. import alerts, database
 from ..config import settings
+from ..errors import friendly_error
 from ..poller import refresh_all
-from .shared import format_timestamp, get_active_sandbox, mark_cache_sandbox, refresh_button, render_friendly_error, sandbox_changed_since_cache
+from .shared import format_timestamp, get_active_sandbox, mark_cache_sandbox, refresh_button, sandbox_changed_since_cache
 
 _BLUE = "#2a78d6"
+
+# Display name per refresh_all() leg key — used to label a per-product
+# warning when that leg's fetch failed (see _do_refresh()'s docstring).
+_LEG_LABELS = {
+    "aep": "AEP", "dc": "Data Collection", "cja": "CJA", "quota": "Quota",
+    "segments": "Segments", "query_service": "Query Service",
+}
 
 
 def _ensure_loaded() -> None:
@@ -17,13 +25,18 @@ def _ensure_loaded() -> None:
 
 
 def _do_refresh() -> None:
+    """refresh_all() isolates each of its six legs in its own try/except —
+    a failing one (e.g. Segments erroring on a bad request) still returns
+    an empty list for that leg plus its exception under results["errors"],
+    rather than raising and losing every *other* leg's already-fetched
+    data too (a real live bug this app previously had: Quota's own fetch
+    had already succeeded, but its result was silently lost because
+    Segments raised before refresh_all() could ever return). This function
+    never needs its own try/except as a result — every leg is guaranteed a
+    result, successful or not."""
     active_sandbox = get_active_sandbox()
-    try:
-        results = refresh_all(sandbox=active_sandbox)
-    except Exception as exc:
-        st.session_state["_overview_error"] = exc
-        return
-    st.session_state["_overview_error"] = None
+    results = refresh_all(sandbox=active_sandbox)
+    st.session_state["_overview_errors"] = results.get("errors") or {}
     st.session_state.aep_rows = results["aep"]
     mark_cache_sandbox("aep_rows", active_sandbox)  # same key aep_page.py tracks — shares one cache
     st.session_state.dc_rows = results["dc"]
@@ -48,11 +61,18 @@ def render() -> None:
             _do_refresh()
     _ensure_loaded()
 
-    error = st.session_state.get("_overview_error")
-    if error is not None:
-        if render_friendly_error(error, key="overview_retry", context="Refreshing all three products"):
-            _do_refresh()
-            st.rerun()
+    leg_errors = st.session_state.get("_overview_errors") or {}
+    if leg_errors:
+        failed_names = ", ".join(_LEG_LABELS.get(name, name) for name in leg_errors)
+        st.warning(
+            f"⚠️ **{failed_names}** failed to refresh — showing the rest of this page with whatever was last "
+            "successfully fetched for those. Click \"Refresh everything\" to retry, or open that product's own "
+            "page for a full error box."
+        )
+        with st.expander("Error details"):
+            for name, exc in leg_errors.items():
+                st.markdown(f"**{_LEG_LABELS.get(name, name)}**: {friendly_error(exc).title}")
+                st.code(str(exc))
 
     open_counts = database.open_alert_counts()
     critical = open_counts.get("critical", 0)

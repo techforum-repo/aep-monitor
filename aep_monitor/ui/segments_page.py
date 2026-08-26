@@ -29,9 +29,10 @@ def render() -> None:
     st.markdown("### Segments — Segmentation Service (Unified Profile)")
     st.caption(f"Segment definitions and recent evaluation jobs. Sandbox: **{get_active_sandbox()}**.")
     st.caption(
-        "⚠️ Newest, least-verified integration in this app (alongside Query Service) — the response shape "
-        "wasn't confirmed against a live tenant. See README's Known Limitations before trusting exact field "
-        "names on a new tenant; the raw response is always available below to check."
+        "Both the Segment Definitions and Segment Jobs shapes below are confirmed against Adobe's own "
+        "published example responses (see README's Known Limitations) — including a real fix: the jobs "
+        "list's `sort` parameter was previously malformed and Adobe rejected it outright with HTTP 400. "
+        "The raw response is always available below to double-check on your own tenant."
     )
 
     if refresh_button("Refresh from Adobe", key="segments_refresh"):

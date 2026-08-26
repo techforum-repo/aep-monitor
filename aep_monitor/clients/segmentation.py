@@ -16,18 +16,18 @@ parse_flow() docstring on why a flow's direction isn't otherwise visible) —
 a failed or stalled segment job upstream is very often the real cause of
 "the audience never showed up," not the destination flow itself.
 
-This is, alongside clients/query_service.py, the newest and least-verified
-integration in this app — same caveat class as Audit Query/Observability
-Insights (see README Known Limitations): the list-response envelope key and
-several field names below (`segments` vs `items` vs `data`; `metrics.
-segmentedProfileCount`; job status vocabulary) are best-effort from Adobe's
-published docs/examples, not confirmed against a live tenant. Every parse
-here is defensive and the raw response is kept alongside the parsed row for
-exactly this reason — check the Segments page's raw-response expander
-against what parse_segment()/parse_segment_job() assume before trusting
-this page's numbers on a new tenant.
+Segment Definitions (`list_segments()`/`parse_segment()`) and Segment Jobs
+(`list_segment_jobs()`/`parse_segment_job()`) are now confirmed against
+Adobe's own published example responses (not guessed) — see
+parse_segment_job()'s docstring for what changed as a result, including a
+real live bug: the original `sort` parameter's syntax was backwards
+(`"desc:createdAt"` instead of the documented `"[attribute]:[asc|desc]"`,
+e.g. `"creationTime:desc"`), which Adobe rejected outright with HTTP 400
+"The expression used is invalid" — a hard failure, not a shape mismatch
+that degrades gracefully like most of the guesses elsewhere in this app.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -58,10 +58,19 @@ class SegmentationClient(BaseAdobeClient):
         return items if isinstance(items, list) else []
 
     async def list_segment_jobs(self, http: httpx.AsyncClient, limit: int = 50, sandbox: str | None = None) -> list[dict[str, Any]]:
+        # Confirmed live via Adobe's own docs example: `sort` is
+        # "[attribute]:[asc|desc]" (e.g. "creationTime:desc") — the
+        # original "desc:createdAt" had both the order and the attribute
+        # name backwards, and Adobe validates this strictly enough to
+        # reject it with a hard HTTP 400 "The expression used is invalid"
+        # rather than silently ignoring a malformed sort. The envelope key
+        # is "children" (HAL-style, with "_page"/"_links"), not
+        # "records"/"items"/"data" as originally guessed — kept as
+        # fallbacks below in case a different tenant/version varies.
         data = await self.get(
-            http, "/segment/jobs", params={"limit": limit, "sort": "desc:createdAt"}, extra_headers=self._sandbox_override(sandbox)
+            http, "/segment/jobs", params={"limit": limit, "sort": "creationTime:desc"}, extra_headers=self._sandbox_override(sandbox)
         )
-        items = (data.get("records") or data.get("items") or data.get("data") or []) if isinstance(data, dict) else []
+        items = (data.get("children") or data.get("records") or data.get("items") or data.get("data") or []) if isinstance(data, dict) else []
         return items if isinstance(items, list) else []
 
     async def test_connection(self) -> bool:
@@ -81,16 +90,50 @@ def parse_segment(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _millis_to_iso(value: Any) -> str:
+    """Segment job timestamps are epoch milliseconds (confirmed live), not
+    ISO strings like every other timestamp in this app — converted here so
+    the rest of this app (format_timestamp(), history tables) doesn't need
+    a special case for this one client."""
+    if not isinstance(value, (int, float)):
+        return ""
+    try:
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+    except (ValueError, OSError, OverflowError):
+        return ""
+
+
 def parse_segment_job(item: dict[str, Any]) -> dict[str, Any]:
+    """Confirmed live via Adobe's own published example response — and it
+    corrected several guesses in the original version of this parser:
+
+    1. A job's segment reference is `segments` — a **list** of
+       `{segmentId: ...}` objects, not a single top-level `segmentId`/
+       `definitionId` string. A job can apparently target more than one
+       segment; this app shows/matches against the first one (the common
+       case) rather than modeling a job as belonging to several segments
+       throughout the rest of the app for a case that's likely rare.
+    2. Timestamps are `creationTime`/`updateTime` in **epoch
+       milliseconds**, not `startTime`/`endTime` ISO strings — converted
+       via `_millis_to_iso()` above.
+    3. The profile-count field is `metrics.segmentedProfileCounter`, not
+       `metrics.segmentedProfileCount` (no missing "er" in the real one).
+
+    Status vocabulary is also now confirmed: `NEW`, `PROCESSING`,
+    `SUCCEEDED`, `FAILED` — only `FAILED`/`ERROR` count as bad; `NEW`/
+    `PROCESSING` are in-progress, not failures.
+    """
     status = str(item.get("status") or "unknown").lower()
     metrics = item.get("metrics")
+    segments = item.get("segments")
+    first_segment = segments[0] if isinstance(segments, list) and segments and isinstance(segments[0], dict) else {}
     return {
         "job_id": str(item.get("id") or ""),
-        "segment_id": str(item.get("segmentId") or item.get("definitionId") or ""),
+        "segment_id": str(first_segment.get("segmentId") or item.get("segmentId") or item.get("definitionId") or ""),
         "status": status,
         "is_bad": status in _BAD_JOB_STATUSES,
-        "segmented_profile_count": metrics.get("segmentedProfileCount") if isinstance(metrics, dict) else None,
-        "started_at": str(item.get("startTime") or item.get("createdAt") or ""),
-        "ended_at": str(item.get("endTime") or item.get("updatedAt") or ""),
+        "segmented_profile_count": metrics.get("segmentedProfileCounter") if isinstance(metrics, dict) else None,
+        "started_at": _millis_to_iso(item.get("creationTime")) or str(item.get("startTime") or ""),
+        "ended_at": _millis_to_iso(item.get("updateTime")) or str(item.get("endTime") or ""),
         "raw": item,
     }

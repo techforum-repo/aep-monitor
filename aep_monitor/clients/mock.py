@@ -15,6 +15,14 @@ def _iso(minutes_ago: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
 
 
+def _millis_ago(minutes_ago: int) -> int:
+    """Segment Jobs' creationTime/updateTime are epoch milliseconds
+    (confirmed live) — a genuinely different timestamp convention from
+    every other client's ISO strings, so mock data needs its own helper
+    rather than reusing _iso()."""
+    return int((datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).timestamp() * 1000)
+
+
 # --- AEP Flow Service --------------------------------------------------------
 
 MOCK_FLOWS: list[dict[str, Any]] = [
@@ -471,16 +479,25 @@ MOCK_SEGMENTS: list[dict[str, Any]] = [
     {"id": "seg-cart-abandon", "name": "Cart Abandoners — 7d", "description": "Added to cart, no purchase within 7 days", "schema": {"name": "Web SDK Events"}},
 ]
 
+# Shaped exactly like Adobe's own published example response (confirmed
+# live — see clients/segmentation.py's parse_segment_job() docstring):
+# "segments" is a list of {segmentId}, not a top-level "segmentId" string,
+# timestamps are epoch-millisecond "creationTime"/"updateTime" not ISO
+# "startTime"/"endTime", and the profile-count field is
+# "segmentedProfileCounter" (with the "er"), not "segmentedProfileCount".
+# The original mock data guessed all four wrong — exactly the class of gap
+# that let a live-only bug (the "sort" param, a completely separate issue)
+# ship without mock mode ever exercising the real shape.
 MOCK_SEGMENT_JOBS: list[dict[str, Any]] = [
     {
-        "id": "job-1", "segmentId": "seg-high-value", "status": "SUCCEEDED",
-        "metrics": {"segmentedProfileCount": 184_302},
-        "startTime": _iso(120), "endTime": _iso(95),
+        "id": "job-1", "segments": [{"segmentId": "seg-high-value"}], "status": "SUCCEEDED",
+        "metrics": {"segmentedProfileCounter": 184_302},
+        "creationTime": _millis_ago(120), "updateTime": _millis_ago(95),
     },
     {
-        "id": "job-2", "segmentId": "seg-cart-abandon", "status": "FAILED",
+        "id": "job-2", "segments": [{"segmentId": "seg-cart-abandon"}], "status": "FAILED",
         "metrics": {},
-        "startTime": _iso(60), "endTime": _iso(55),
+        "creationTime": _millis_ago(60), "updateTime": _millis_ago(55),
     },
 ]
 

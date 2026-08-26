@@ -116,6 +116,29 @@ def test_query_service_client_sends_sandbox_name_header(monkeypatch):
     assert headers["x-sandbox-name"] == "prod"
 
 
+def test_segmentation_client_sends_the_confirmed_sort_syntax_for_segment_jobs(monkeypatch):
+    """Regression for a real live bug: the original `sort` value was
+    "desc:createdAt" (order and attribute name both backwards) — Adobe
+    rejected it outright with HTTP 400 "The expression used is invalid".
+    Confirmed live via Adobe's own docs example: the syntax is
+    "[attribute]:[asc|desc]", e.g. "creationTime:desc"."""
+    from aep_monitor.clients.segmentation import SegmentationClient
+
+    captured: dict = {}
+
+    async def _fake_get(self, http, path, extra_headers=None, **kwargs):
+        captured["path"] = path
+        captured["kwargs"] = kwargs
+        return {}
+
+    monkeypatch.setattr(SegmentationClient, "get", _fake_get)
+    client = SegmentationClient("cid", "secret", "scope", "org")
+    asyncio.run(client.list_segment_jobs(http=None))
+
+    assert captured["path"] == "/segment/jobs"
+    assert captured["kwargs"]["params"]["sort"] == "creationTime:desc"
+
+
 def test_schema_registry_client_requests_label_descriptors_with_the_confirmed_filter(monkeypatch):
     """Confirmed *live*, not from docs (Adobe's own reference doc for this
     endpoint doesn't document a schema/type filter at all, and doesn't

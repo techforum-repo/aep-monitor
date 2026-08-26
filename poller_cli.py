@@ -23,13 +23,21 @@ def main() -> int:
     harden_env_file()
     try:
         results = refresh_all()
-    except Exception as exc:  # noqa: BLE001 — this is the top-level CLI entry point
+    except Exception as exc:  # noqa: BLE001 — top-level safety net; refresh_all() itself isolates each leg's own errors below, so this should only trip on a genuine bug in the orchestration itself
         print(f"Poll cycle failed: {exc}", file=sys.stderr)
         return 1
     print(
         f"AEP flows: {len(results['aep'])}, DC properties: {len(results['dc'])}, CJA connections: {len(results['cja'])}, "
         f"segment jobs: {len(results['segments'])}, queries: {len(results['query_service'])}"
     )
+    # Each leg isolates its own failure (see refresh_all()'s docstring) so
+    # one broken product's fetch never costs every other product its
+    # already-fetched data — but a failure still needs to surface here,
+    # both for whoever reads cron's log and for the exit code cron
+    # alerting typically watches.
+    leg_errors = results.get("errors") or {}
+    for name, exc in leg_errors.items():
+        print(f"{name} leg failed: {exc}", file=sys.stderr)
 
     # Keeps "vs. last snapshot" drift baselines fresh for whatever entities
     # a Compare visit has already opted into tracking (see
@@ -45,7 +53,11 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 — same top-level CLI reasoning as above
         print(f"Drift sweep failed: {exc}", file=sys.stderr)
 
-    return 0
+    # Non-zero whenever any leg failed, so cron-failure alerting (watching
+    # this script's exit code) still catches a partial failure — even
+    # though the poll cycle itself no longer aborts on one, per-leg errors
+    # printed above still need to reach whoever/whatever is monitoring this.
+    return 1 if leg_errors else 0
 
 
 if __name__ == "__main__":

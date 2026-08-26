@@ -7,7 +7,7 @@ background poller (see poller_cli.py / README "Continuous background
 polling") so history/alerts keep accumulating even with the app closed.
 """
 
-from typing import Any
+from typing import Any, Callable
 
 from . import alerts, data, database
 from .logging_setup import get_logger
@@ -90,20 +90,47 @@ def refresh_query_service(sandbox: str | None = None) -> list[dict[str, Any]]:
     return rows
 
 
-def refresh_all(sandbox: str | None = None) -> dict[str, list[dict[str, Any]]]:
+def refresh_all(sandbox: str | None = None) -> dict[str, Any]:
     """Used by poller_cli.py (cron) and the Overview page's single "Refresh
     everything" button. `sandbox` affects every leg that's actually
     sandbox-scoped in Adobe's architecture (AEP, Segments, Query Service) —
     Data Collection, CJA, and Quota are org-wide (see
-    fetch_sandbox_comparison's docstring in data.py)."""
-    return {
-        "aep": refresh_aep(sandbox=sandbox),
-        "dc": refresh_dc(),
-        "cja": refresh_cja(),
-        "quota": refresh_quota(),
-        "segments": refresh_segments(sandbox=sandbox),
-        "query_service": refresh_query_service(sandbox=sandbox),
-    }
+    fetch_sandbox_comparison's docstring in data.py).
+
+    Each of the six legs is fetched independently, in its own try/except —
+    a real live bug (Segments' `sort` parameter — see clients/
+    segmentation.py) previously showed this wasn't just a hypothetical
+    risk: one leg raising aborted the dict literal entirely, so a single
+    broken product silently starved *every other* product of its already-
+    fetched data too — Quota's own fetch had already succeeded by the time
+    Segments raised, but its result was lost anyway, along with AEP/DC/CJA,
+    because the whole function never got to return. A failing leg now
+    contributes an empty list plus its exception under the returned
+    "errors" key (keyed the same way as the row lists) — the caller (see
+    ui/overview.py) can show a per-product warning instead of losing the
+    whole page, and alerts.evaluate_freshness() independently surfaces a
+    "gone quiet" alert for that specific source if the failure persists
+    past ALERT_STALE_AFTER_HOURS, since a failed leg never gets a fresh
+    snapshot recorded."""
+    legs: list[tuple[str, Callable[[], list[dict[str, Any]]]]] = [
+        ("aep", lambda: refresh_aep(sandbox=sandbox)),
+        ("dc", lambda: refresh_dc()),
+        ("cja", lambda: refresh_cja()),
+        ("quota", lambda: refresh_quota()),
+        ("segments", lambda: refresh_segments(sandbox=sandbox)),
+        ("query_service", lambda: refresh_query_service(sandbox=sandbox)),
+    ]
+    results: dict[str, Any] = {}
+    errors: dict[str, Exception] = {}
+    for name, fn in legs:
+        try:
+            results[name] = fn()
+        except Exception as exc:
+            get_logger().warning("refresh_all: %s leg failed", name, exc_info=True)
+            results[name] = []
+            errors[name] = exc
+    results["errors"] = errors
+    return results
 
 
 def refresh_entity_drift() -> dict[str, int]:
