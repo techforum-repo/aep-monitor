@@ -24,6 +24,25 @@ def _resolve_name(lookup: dict[str, str], entity_id: str) -> str:
     return name if name else f"{entity_id} (unresolved)"
 
 
+def _resolve_project_connection(dataview_id: str, conn_id_by_dv: dict[str, str], names_by_conn: dict[str, str]) -> str:
+    """Two-hop resolution for the Projects table's Connection column
+    (project -> data view -> connection). Regression: piping
+    conn_id_by_dv.get(dataview_id, "") straight into _resolve_name() made
+    an unresolvable *data view* look identical to "this project genuinely
+    has no connection" — the empty-string default for a missed first hop
+    hit _resolve_name()'s own not-flagged "—" case, even though the same
+    row's Data view column correctly showed that dataview_id as
+    unresolved. Handled explicitly here instead: no dataview_id at all is
+    the genuine "—" case; a dataview_id that isn't in this credential's
+    own data view list means the connection is unknowable too (not
+    "none"), and says so."""
+    if not dataview_id:
+        return "—"
+    if dataview_id not in conn_id_by_dv:
+        return f"{dataview_id} (data view unresolved)"
+    return _resolve_name(names_by_conn, conn_id_by_dv[dataview_id])
+
+
 def _ensure_loaded() -> None:
     # Checks all three, not just cja_connections: the Overview page's
     # "Refresh everything" populates cja_connections (via refresh_all() ->
@@ -127,8 +146,9 @@ def render() -> None:
                 "Data view": _resolve_name(names_by_dv, p["dataview_id"]),
                 # Two-hop resolution (project -> data view -> connection) —
                 # unresolved at either hop still falls back distinguishably
-                # rather than silently showing a raw id.
-                "Connection": _resolve_name(names_by_conn, conn_id_by_dv.get(p["dataview_id"], "")),
+                # rather than silently showing "—" as if there were no
+                # connection at all (see _resolve_project_connection()).
+                "Connection": _resolve_project_connection(p["dataview_id"], conn_id_by_dv, names_by_conn),
                 "Owner": p["owner"] or "—",
                 "Created": p["created_at"] or "—",
             }

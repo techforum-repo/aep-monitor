@@ -608,6 +608,35 @@ def test_cja_page_flags_an_unresolvable_reference_instead_of_a_bare_id(monkeypat
     assert all(str(v).endswith("(unresolved)") for v in proj_table["Connection"])
 
 
+def test_cja_page_flags_a_projects_connection_as_unresolved_when_its_dataview_is_missing(monkeypatch):
+    """Regression found by code review: a project referencing a data view
+    this credential can't itself see (a real, expected access-model gap —
+    Data Views needs the credential's own Product Profile permissions) has
+    its Connection column resolved via a two-hop lookup
+    (project -> data view -> connection). The first version fed the
+    missed first hop's "" default straight into the generic id->name
+    resolver, which short-circuits on a falsy id and returns the *same*
+    "—" used for "this project genuinely has no connection" — so an
+    unresolvable data view silently looked identical to "no connection",
+    even though the same row's Data view column correctly flagged it as
+    unresolved. Emptying MOCK_DATAVIEWS (not MOCK_CONNECTIONS, which the
+    test above already covers) reproduces the missed-first-hop case
+    specifically."""
+    from aep_monitor.clients import mock as mock_module
+    monkeypatch.setattr(mock_module, "MOCK_DATAVIEWS", [])
+
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.radio(key="navigation").set_value("CJA").run()
+
+    assert at.exception == []
+    proj_table = next(df.value for df in at.get("dataframe") if "Project" in df.value.columns)
+    # Every project's data view is unresolved, so its connection must be
+    # flagged too — never the bare "—" that would look like "no connection".
+    assert not any(str(v) == "—" for v in proj_table["Connection"])
+    assert all("unresolved" in str(v) for v in proj_table["Connection"])
+
+
 def test_cja_page_shows_data_views_and_projects_after_visiting_overview_first():
     """Regression: Overview's "Refresh everything" populates
     cja_connections (via refresh_all() -> refresh_cja()) but not
