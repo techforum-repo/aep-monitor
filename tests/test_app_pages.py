@@ -123,6 +123,26 @@ def test_overview_lineage_filters_connections_by_sandbox_relevance_with_an_opt_o
     assert "CRM Connection" in focus.options
 
 
+def test_overview_lineage_renders_without_exception_when_focused_on_a_connection_unrelated_to_any_mapped_datastream():
+    """Regression: an earlier version filtered Property/Datastream edges to
+    only the focused connection's own datasets — reported live as a real
+    bug, since a property's datastream can forward to a dataset that isn't
+    part of *any* CJA connection at all. PR1's mock datastream maps to
+    "Loyalty Events", which "CRM Connection" doesn't use (it uses "CRM
+    Customer Batch" instead) — picking CRM Connection must not error, and
+    the property/datastream mapping must still be visible somewhere (the
+    DC properties table is the inspectable part; Streamlit's AppTest can't
+    introspect a plotly_chart's actual figure data, confirmed directly —
+    it comes back as an UnknownElement with no readable .value)."""
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    at.selectbox(key="overview_lineage_focus").set_value("CRM Connection").run()
+
+    assert at.exception == []
+    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
+    assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"] == "Prod Web Datastream"
+
+
 def test_sdr_page_loads_dataview_components_and_schema_fields_on_selection():
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()

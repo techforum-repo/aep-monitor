@@ -279,9 +279,10 @@ def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatc
 
 
 def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
-    """PR1's mock Web SDK extension carries a datastreamId matching
-    datastream_map.sample.json's one entry, which maps to the "Loyalty
-    Events" dataset — mock mode should demonstrate the whole
+    """PR1's mock Web SDK extension carries a datastreamId matching one of
+    datastream_map.sample.json's entries (a flat object, one entry per
+    datastream — this is the entry that maps to the "Loyalty Events"
+    dataset) — mock mode should demonstrate the whole
     Property -> Datastream -> Dataset chain out of the box."""
     dc_rows = data.fetch_dc()
     edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")

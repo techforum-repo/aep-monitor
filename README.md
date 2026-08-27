@@ -699,16 +699,30 @@ once per alert, not on every subsequent poll while it's still open.
   reliably too dense to read no matter how much the rendering is tuned, so
   the option was removed rather than merely defaulted away from. That
   picker is itself filtered to connections with at least one dataset
-  resolving in the *currently active sandbox* — an **inference**, not
-  something Adobe's API states directly (Connections are org-wide and
-  carry no sandbox field of their own to check), with a "Show connections
-  with no resolved data in this sandbox too" checkbox as an explicit
-  opt-out so a connection is never silently unreachable, only filtered by
-  default. Property/Datastream edges are further scoped to only the
-  dataset(s) the focused connection actually uses — an unfiltered join
-  across every property in the org would just be noise unrelated to what's
-  on screen; the Data Collection properties table underneath the chart
-  shows every property's resolved datastream regardless of focus.
+  **actually resolving** in the *currently active sandbox* (deliberately
+  strict — a connection with no configured datasets at all, or only
+  unresolved ones here, doesn't count) — an **inference**, not something
+  Adobe's API states directly (Connections are org-wide and carry no
+  sandbox field of their own to check), with a "Show connections with no
+  resolved data in this sandbox too" checkbox as an explicit opt-out so a
+  connection is never silently unreachable, only filtered by default.
+
+  Property/Datastream edges, by contrast, are **not** scoped to the
+  focused connection — every one is always shown, regardless of which
+  connection is picked. An earlier version filtered them to only the
+  focused connection's own datasets, which turned out to be a real bug
+  reported live: a property's datastream very plausibly forwards to a
+  dataset that isn't part of *any* CJA connection at all (e.g. a raw
+  data-lake landing dataset), so that filter could silently hide a
+  correctly-configured mapping no matter which connection was selected.
+  The shared dataset-name node merge in `_build_lineage_sankey()` is what
+  connects a Property → Datastream → Dataset edge into the CJA-side chain
+  *when* they happen to share a dataset; when they don't, it still renders
+  as its own segment with nothing further downstream — the same honest
+  dead-end treatment every other unconnected stage in this chart already
+  gets, rather than disappearing. The Data Collection properties table
+  underneath the chart shows every property's resolved datastream too,
+  independent of the chart entirely.
 
   A dataset id a connection references but the active sandbox's own
   dataset list can't resolve (a real possibility — Datasets are

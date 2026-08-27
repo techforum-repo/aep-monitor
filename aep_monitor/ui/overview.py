@@ -170,6 +170,24 @@ def render() -> None:
     _render_lineage()
 
 
+def _sandbox_relevant_connection_names(rows: list[dict]) -> list[str]:
+    """Which connections count as "belonging to" the currently active
+    sandbox — an inference, not something Adobe's API states directly
+    (Connections are org-wide and carry no sandbox field of their own to
+    check). Deliberately strict: a connection counts as relevant only if
+    at least one of its datasets actually resolved in this sandbox. A
+    connection with no configured dataset_ids at all, or whose only
+    datasets are unresolved here, has nothing tying it to this specific
+    sandbox and is excluded — it's still reachable via
+    ui/overview.py's "Show connections with no resolved data in this
+    sandbox too" checkbox, never permanently lost."""
+    all_names = sorted({row["connection"] for row in rows if row["connection"]})
+    return [
+        name for name in all_names
+        if any(r["dataset"] and r["dataset"] != "—" and not r["dataset"].endswith("(unresolved)") for r in rows if r["connection"] == name)
+    ]
+
+
 def _do_refresh_lineage() -> None:
     active_sandbox = get_active_sandbox()
     try:
@@ -394,19 +412,7 @@ def _render_lineage() -> None:
             # crushed view it exists to get away from, so it's removed
             # rather than merely defaulted-away-from.
             all_connection_names = sorted({row["connection"] for row in rows if row["connection"]})
-            # Connections have no sandbox field at all (they're org-wide,
-            # confirmed via Adobe's docs — see README) — there's no direct
-            # way to ask Adobe "which connections belong to this sandbox."
-            # This infers it instead: a connection counts as relevant to
-            # the active sandbox if at least one of its datasets actually
-            # resolved there. A connection with literally no configured
-            # dataset_ids has nothing to mismatch on either way and always
-            # counts as relevant, rather than being penalized for having
-            # nothing to check.
-            sandbox_relevant_names = [
-                name for name in all_connection_names
-                if any(r["dataset"] == "—" or not r["dataset"].endswith("(unresolved)") for r in rows if r["connection"] == name)
-            ]
+            sandbox_relevant_names = _sandbox_relevant_connection_names(rows)
             show_all = st.checkbox(
                 "Show connections with no resolved data in this sandbox too", key="overview_lineage_show_all_connections",
                 help="Off by default: a connection's datasets not resolving here usually just means its real data lives in a different sandbox.",
@@ -433,18 +439,28 @@ def _render_lineage() -> None:
             # data.fetch_property_datastream_edges()) feeding into the
             # *same* Dataset stage. Cached in session state by
             # _do_refresh_lineage(), not fetched here — see that
-            # function's docstring. Scoped to only the datasets the
-            # currently focused connection actually uses, same reasoning
-            # as the connection picker itself — an unfiltered join across
-            # every property in the org would just be noise unrelated to
-            # what's on screen.
+            # function's docstring.
+            #
+            # Deliberately NOT filtered to the focused connection's own
+            # datasets — reported live as a real bug: a property's
+            # datastream very plausibly forwards to a dataset that isn't
+            # part of *any* CJA connection (e.g. a raw data-lake landing
+            # dataset), so filtering by "does the focused connection use
+            # this dataset" silently hid a mapping that was configured
+            # correctly, no matter which connection was picked. Every
+            # property/datastream edge is always shown; the shared
+            # dataset-name node merge (see _build_lineage_sankey()) is
+            # what naturally connects it into the CJA-side chain *when*
+            # they share a dataset — and when they don't, it still renders
+            # as its own Property -> Datastream -> Dataset segment with no
+            # further downstream, the same honest "dead end" treatment
+            # every other unconnected stage in this chart already gets,
+            # rather than disappearing.
             property_edges = st.session_state.get("property_datastream_edges") or []
-            visible_dataset_names = {r["dataset"] for r in visible_rows if r["dataset"]}
-            relevant_property_edges = [e for e in property_edges if e["dataset"] in visible_dataset_names]
 
             _render_lineage_legend()
             st.plotly_chart(
-                _build_lineage_sankey(visible_rows, relevant_property_edges), use_container_width=True, key="overview_lineage_sankey",
+                _build_lineage_sankey(visible_rows, property_edges), use_container_width=True, key="overview_lineage_sankey",
             )
 
             unmapped_datastream_ids = sorted({e["datastream_id"] for e in property_edges if not e["mapped"]})

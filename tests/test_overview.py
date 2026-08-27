@@ -12,7 +12,7 @@ height) were reported live against a real org whose scale — dozens of
 connections/projects/unresolved dataset ids — the original ~5-node mock
 demo never exercised."""
 
-from aep_monitor.ui.overview import _build_lineage_sankey
+from aep_monitor.ui.overview import _build_lineage_sankey, _sandbox_relevant_connection_names
 
 
 def _row(schema="sch", dataset="ds", connection="conn", dataview="dv", project="proj"):
@@ -192,3 +192,32 @@ def test_build_lineage_sankey_works_with_no_property_edges_at_all():
     fig = _build_lineage_sankey([_row()])
     labels = list(fig.data[0].node.label)
     assert labels == ["sch", "ds", "conn", "dv", "proj"]
+
+
+def test_sandbox_relevant_connections_requires_an_actual_resolved_dataset():
+    """Regression: a connection with no configured datasets at all used to
+    always count as "relevant" (nothing to mismatch on) — reported live
+    as too lenient for "only connections associated to the selected
+    sandbox." A connection needs at least one dataset that actually
+    resolved here to count now."""
+    rows = [
+        _row(connection="has-real-data", dataset="Loyalty Events"),
+        _row(connection="no-datasets-configured", dataset="—"),
+        _row(connection="only-unresolved", dataset="abc123 (unresolved)"),
+    ]
+    assert _sandbox_relevant_connection_names(rows) == ["has-real-data"]
+
+
+def test_sandbox_relevant_connections_includes_a_connection_with_at_least_one_real_dataset():
+    """A connection can have both a resolved and an unresolved dataset —
+    one real hit is enough to count as relevant."""
+    rows = [
+        _row(connection="mixed", dataset="Loyalty Events"),
+        _row(connection="mixed", dataset="abc123 (unresolved)"),
+    ]
+    assert _sandbox_relevant_connection_names(rows) == ["mixed"]
+
+
+def test_sandbox_relevant_connections_returns_empty_when_nothing_qualifies():
+    rows = [_row(connection="only-unresolved", dataset="abc123 (unresolved)")]
+    assert _sandbox_relevant_connection_names(rows) == []
