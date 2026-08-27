@@ -63,6 +63,12 @@ def test_overview_page_shows_the_end_to_end_lineage_and_unlinked_dc_properties()
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
     assert len(dc_table) == 2  # both mock DC properties, listed unconnected
 
+    # "All connections" was removed — a real org's full, unfiltered pipeline
+    # is reliably too dense to read, so the picker always scopes to one.
+    focus = at.selectbox(key="overview_lineage_focus")
+    assert "All connections" not in focus.options
+    assert focus.value in focus.options  # defaults to a real connection, not an unset/invalid value
+
 
 def test_overview_lineage_names_the_cja_permission_gap_when_connections_are_empty(monkeypatch):
     """Regression: a generic "nothing to chart" message was indistinguishable

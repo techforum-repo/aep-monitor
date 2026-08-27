@@ -186,6 +186,20 @@ def _do_refresh_lineage() -> None:
 # (see ui/shared.py's _GOOD/_WARNING/_BAD_STATES) — this palette is a
 # stage identity, not a health signal, and must never be confused with one.
 _LINEAGE_STAGE_COLORS = {"schema": "#1fada6", "dataset": "#2a78d6", "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa"}
+# Same order as the pipeline itself (left to right) — used for both the
+# legend and each node's hover text, so "which color is which stage" never
+# has to be inferred or memorized from the caption alone.
+_LINEAGE_STAGE_LABELS = {"schema": "Schema", "dataset": "Dataset", "connection": "Connection", "dataview": "Data View", "project": "Project"}
+
+
+def _render_lineage_legend() -> None:
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:.35rem;margin-right:1rem;font-size:.85rem">'
+        f'<span style="width:.7rem;height:.7rem;border-radius:50%;background:{_LINEAGE_STAGE_COLORS[stage]};display:inline-block"></span>'
+        f'{label}</span>'
+        for stage, label in _LINEAGE_STAGE_LABELS.items()
+    )
+    st.markdown(f'<div style="margin-bottom:.4rem">{chips}</div>', unsafe_allow_html=True)
 
 
 def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
@@ -217,10 +231,16 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     always gets its own node, never folded into "Unresolved dataset"
     (that collapsing is specifically for the CJA-side permission gap, not
     schema resolution, which is a different, much less lossy fallback —
-    see fetch_cja_dataset_lineage()'s docstring)."""
+    see fetch_cja_dataset_lineage()'s docstring).
+
+    Each node's hover text is prefixed with its stage ("Schema: X", not
+    just "X") — the color legend above the chart (_render_lineage_legend())
+    covers the same mapping at a glance, but hover is what actually
+    confirms it for a specific node without cross-referencing the legend."""
     node_index: dict[tuple[str, str], int] = {}
     node_labels: list[str] = []
     node_colors: list[str] = []
+    node_hover: list[str] = []
     nodes_per_stage: dict[str, set[str]] = {"schema": set(), "dataset": set(), "connection": set(), "dataview": set(), "project": set()}
 
     def _node(stage: str, name: str) -> int | None:
@@ -233,6 +253,7 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
             node_index[key] = len(node_labels)
             node_labels.append(display_name)
             node_colors.append(_LINEAGE_STAGE_COLORS[stage])
+            node_hover.append(f"{_LINEAGE_STAGE_LABELS[stage]}: {display_name}")
         return node_index[key]
 
     link_counts: dict[tuple[int, int], int] = {}
@@ -246,7 +267,10 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
                 link_counts[(a, b)] = link_counts.get((a, b), 0) + 1
 
     fig = go.Figure(go.Sankey(
-        node=dict(label=node_labels, color=node_colors, pad=12, thickness=14),
+        node=dict(
+            label=node_labels, color=node_colors, pad=12, thickness=14,
+            customdata=node_hover, hovertemplate="%{customdata}<extra></extra>",
+        ),
         link=dict(source=[a for a, _ in link_counts], target=[b for _, b in link_counts], value=list(link_counts.values())),
     ))
     # 380px was tuned against the mock demo's ~5 nodes per stage — a real
@@ -280,8 +304,9 @@ def _render_lineage() -> None:
         "Data Collection properties are listed separately below, **not** connected into this flow — there's no "
         "public API for Datastream configuration (which property's Web SDK datastream sends to which dataset), "
         "so that link can't be discovered programmatically; only whoever configured it knows the mapping. "
-        "Every unresolved dataset id collapses into one shared node, and \"Focus on\" below scopes the chart to "
-        "one connection — both there so a real org's full pipeline stays legible instead of a wall of crushed labels."
+        "Every unresolved dataset id collapses into one shared node, and the chart is always scoped to one "
+        "connection at a time (pick it below) — a real org's full, unfiltered pipeline is reliably too dense to "
+        "read at once. Hover any node, or check the legend above the chart, for which color is which stage."
     )
     if st.session_state.get("lineage_rows") is None or sandbox_changed_since_cache("lineage_rows", get_active_sandbox()):
         _do_refresh_lineage()
@@ -311,15 +336,19 @@ def _render_lineage() -> None:
             # Reported live against a real org: an unfiltered chart with
             # dozens of connections/projects is a wall of crushed labels no
             # amount of static tuning alone fixes — a mock demo's ~2
-            # connections never surfaced this. Defaults to the full graph
-            # (unchanged behavior); picking one connection scopes the
-            # Sankey to just that pipeline, which is legible at any org size.
+            # connections never surfaced this. Always scoped to exactly one
+            # connection's own pipeline now — an "All connections" option
+            # was tried first, but at real-org scale it's never actually
+            # the legible choice, just a tempting way to land back on the
+            # crushed view it exists to get away from, so it's removed
+            # rather than merely defaulted-away-from.
             connection_names = sorted({row["connection"] for row in rows if row["connection"]})
             focus = st.selectbox(
-                "Focus on", ["All connections", *connection_names], key="overview_lineage_focus",
-                help="A real org's full pipeline can be too dense to read at once — narrow to one connection's own flow.",
+                "Focus on connection", connection_names, key="overview_lineage_focus",
+                help="Scoped to one connection's own pipeline — a real org's full, unfiltered graph is reliably too dense to read at once.",
             )
-            visible_rows = rows if focus == "All connections" else [r for r in rows if r["connection"] == focus]
+            visible_rows = [r for r in rows if r["connection"] == focus]
+            _render_lineage_legend()
             st.plotly_chart(_build_lineage_sankey(visible_rows), use_container_width=True, key="overview_lineage_sankey")
 
             unresolved_ids = sorted({row["dataset"] for row in visible_rows if row["dataset"].endswith("(unresolved)")})

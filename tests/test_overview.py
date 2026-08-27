@@ -131,6 +131,20 @@ def test_two_datasets_sharing_one_schema_fan_into_the_same_schema_node():
     assert "CRM Customer Batch" in labels
 
 
+def test_node_hover_text_is_prefixed_with_its_stage():
+    """The legend above the chart covers the color mapping at a glance;
+    hover is what actually confirms it for one specific node without
+    cross-referencing back to the legend."""
+    rows = [_row(schema="Loyalty Schema", dataset="Loyalty Events", connection="Web + Mobile Unified", dataview="Executive Dashboard View", project="Weekly Report")]
+    fig = _build_lineage_sankey(rows)
+    hover = list(fig.data[0].node.customdata)
+    assert "Schema: Loyalty Schema" in hover
+    assert "Dataset: Loyalty Events" in hover
+    assert "Connection: Web + Mobile Unified" in hover
+    assert "Data View: Executive Dashboard View" in hover
+    assert "Project: Weekly Report" in hover
+
+
 def test_an_unresolved_dataset_has_no_schema_node_but_the_rest_of_the_chain_still_renders():
     """A blank schema (an unresolved dataset has no schema to show — see
     fetch_cja_dataset_lineage()'s docstring) must not break the rest of
