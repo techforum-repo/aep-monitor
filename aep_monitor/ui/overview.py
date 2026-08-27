@@ -192,18 +192,35 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     a project happening to share a name with a dataset) can never merge
     two conceptually different nodes into one; multiple rows contributing
     the same stage-to-stage edge are collapsed into one link whose value
-    is the count of paths through it, rather than one link per row."""
+    is the count of paths through it, rather than one link per row.
+
+    Reported live as "comes but not better" against a real org (a mock-data
+    scale of ~2 connections/~5 projects never exercised this): every
+    unresolved dataset id was its own node, and a real org's permission gap
+    can produce dozens of them — a wall of long, near-identical, mostly
+    illegible GUID labels stacked on the left. Every stage-4 fallback
+    below collapses to one shared "Unresolved dataset" node instead (the
+    specific raw ids are still listed in the caption under the chart, in
+    ui/overview.py's _render_lineage(), for anyone actually debugging a
+    resolution gap) — this is a visualization-layer decision only;
+    fetch_cja_dataset_lineage() itself is untouched and still returns the
+    specific id per row. Figure height is also no longer fixed — a real
+    org can need far more vertical space per node than the ~5-node mock
+    demo did to keep labels from overlapping."""
     node_index: dict[tuple[str, str], int] = {}
     node_labels: list[str] = []
     node_colors: list[str] = []
+    nodes_per_stage: dict[str, set[str]] = {"dataset": set(), "connection": set(), "dataview": set(), "project": set()}
 
     def _node(stage: str, name: str) -> int | None:
         if not name:
             return None
-        key = (stage, name)
+        display_name = "Unresolved dataset" if stage == "dataset" and name.endswith("(unresolved)") else name
+        nodes_per_stage[stage].add(display_name)
+        key = (stage, display_name)
         if key not in node_index:
             node_index[key] = len(node_labels)
-            node_labels.append(name)
+            node_labels.append(display_name)
             node_colors.append(_LINEAGE_STAGE_COLORS[stage])
         return node_index[key]
 
@@ -218,10 +235,17 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
                 link_counts[(a, b)] = link_counts.get((a, b), 0) + 1
 
     fig = go.Figure(go.Sankey(
-        node=dict(label=node_labels, color=node_colors, pad=15, thickness=16),
+        node=dict(label=node_labels, color=node_colors, pad=12, thickness=14),
         link=dict(source=[a for a, _ in link_counts], target=[b for _, b in link_counts], value=list(link_counts.values())),
     ))
-    fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), font_size=12)
+    # 380px was tuned against the mock demo's ~5 nodes per stage — a real
+    # org's busiest stage (usually Project) can have dozens, and a fixed
+    # height just crams them until the labels overlap into unreadable mush
+    # (reported live). ~24px per node in the tallest stage, floored at the
+    # old default so a small org still gets a reasonably sized chart.
+    busiest_stage = max((len(names) for names in nodes_per_stage.values()), default=1)
+    height = max(380, 24 * busiest_stage)
+    fig.update_layout(height=height, margin=dict(l=10, r=10, t=10, b=10), font_size=12)
     return fig
 
 
@@ -233,7 +257,9 @@ def _render_lineage() -> None:
         "own `dataSets` field, its data views' parent-connection binding, and a project's data-view binding. "
         "Data Collection properties are listed separately below, **not** connected into this flow — there's no "
         "public API for Datastream configuration (which property's Web SDK datastream sends to which dataset), "
-        "so that link can't be discovered programmatically; only whoever configured it knows the mapping."
+        "so that link can't be discovered programmatically; only whoever configured it knows the mapping. "
+        "Every unresolved dataset id collapses into one shared node, and \"Focus on\" below scopes the chart to "
+        "one connection — both there so a real org's full pipeline stays legible instead of a wall of crushed labels."
     )
     if st.session_state.get("lineage_rows") is None or sandbox_changed_since_cache("lineage_rows", get_active_sandbox()):
         _do_refresh_lineage()
@@ -260,7 +286,26 @@ def _render_lineage() -> None:
             else:
                 st.caption("No datasets, data views, or projects found to chart, despite having visible connections.")
         else:
-            st.plotly_chart(_build_lineage_sankey(rows), use_container_width=True, key="overview_lineage_sankey")
+            # Reported live against a real org: an unfiltered chart with
+            # dozens of connections/projects is a wall of crushed labels no
+            # amount of static tuning alone fixes — a mock demo's ~2
+            # connections never surfaced this. Defaults to the full graph
+            # (unchanged behavior); picking one connection scopes the
+            # Sankey to just that pipeline, which is legible at any org size.
+            connection_names = sorted({row["connection"] for row in rows if row["connection"]})
+            focus = st.selectbox(
+                "Focus on", ["All connections", *connection_names], key="overview_lineage_focus",
+                help="A real org's full pipeline can be too dense to read at once — narrow to one connection's own flow.",
+            )
+            visible_rows = rows if focus == "All connections" else [r for r in rows if r["connection"] == focus]
+            st.plotly_chart(_build_lineage_sankey(visible_rows), use_container_width=True, key="overview_lineage_sankey")
+
+            unresolved_ids = sorted({row["dataset"] for row in visible_rows if row["dataset"].endswith("(unresolved)")})
+            if unresolved_ids:
+                st.caption(
+                    f"{len(unresolved_ids)} dataset id(s) shown above as one \"Unresolved dataset\" node — "
+                    "raw ids: " + ", ".join(unresolved_ids[:10]) + (f", and {len(unresolved_ids) - 10} more" if len(unresolved_ids) > 10 else "")
+                )
 
     st.markdown("###### Data Collection properties (not linked above)")
     dc_rows = st.session_state.dc_rows or []
