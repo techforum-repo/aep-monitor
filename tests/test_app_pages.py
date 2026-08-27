@@ -74,6 +74,16 @@ def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
     pr2_row = dc_table[dc_table["Property"] == "Acme Mobile App"].iloc[0]
     assert pr2_row["Datastream"] == "—"
 
+    # The debug table — added specifically so a mapping that isn't showing
+    # up as expected can be checked directly against real extracted/matched
+    # values instead of guessing further.
+    debug_table = next(df.value for df in at.get("dataframe") if "Datastream ID (extracted)" in df.value.columns)
+    prod_row = debug_table[(debug_table["Property"] == "acme.com — Web") & (debug_table["Environment"] == "production")].iloc[0]
+    assert prod_row["Datastream ID (extracted)"] == "00000000-0000-0000-0000-000000000000"
+    assert prod_row["In map file?"] == "Yes"
+    assert prod_row["Dataset ID (from map)"] == "5f1a2b3c4d5e6f7a8b9c0d1e"
+    assert prod_row["Resolved dataset name"] == "Loyalty Events"
+
     # "All connections" was removed — a real org's full, unfiltered pipeline
     # is reliably too dense to read, so the picker always scopes to one.
     focus = at.selectbox(key="overview_lineage_focus")

@@ -292,6 +292,7 @@ def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
     assert by_env["production"]["datastream"] == "Prod Web Datastream (production)"
     assert by_env["production"]["dataset"] == "Loyalty Events"
     assert by_env["production"]["mapped"] is True
+    assert by_env["production"]["mapped_dataset_id"] == "5f1a2b3c4d5e6f7a8b9c0d1e"  # raw id, for debug comparison
 
     assert by_env["staging"]["datastream"] == "Staging Web Datastream (staging)"
     assert by_env["staging"]["dataset"] == "Web SDK Events"
@@ -299,6 +300,7 @@ def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
 
     assert by_env["development"]["mapped"] is False
     assert by_env["development"]["dataset"] == ""
+    assert by_env["development"]["mapped_dataset_id"] == ""  # nothing to compare — never mapped at all
     assert "unmapped" in by_env["development"]["datastream"]
 
     assert not any(e["property"] == "Acme Mobile App" for e in edges)  # no Web SDK extension configured at all

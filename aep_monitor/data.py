@@ -356,16 +356,23 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
 
         for environment, datastream_id in datastream_ids.items():
             mapped_entry = datastream_map.get(datastream_id)
+            mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
             if mapped_entry:
                 datastream_label = f"{mapped_entry['name'] or datastream_id} ({environment})"
-                dataset_id = mapped_entry["dataset_id"]
-                dataset_label = dataset_names.get(dataset_id, f"{dataset_id} (unresolved)" if dataset_id else "")
+                dataset_label = dataset_names.get(mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "")
             else:
                 datastream_label = f"{datastream_id} (unmapped, {environment})"
                 dataset_label = ""
             rows.append({
                 "property": prop["property_name"], "environment": environment, "datastream_id": datastream_id,
                 "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
+                # Raw, unformatted values kept alongside the display labels
+                # above specifically for debugging a mapping that isn't
+                # showing up as expected — reported live as needed to check
+                # extracted ids directly against a real tenant's actual
+                # Datastream/Dataset ids, not just the resolved display
+                # text. See ui/overview.py's debug expander.
+                "mapped_dataset_id": mapped_dataset_id,
             })
     return rows
 

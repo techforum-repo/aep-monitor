@@ -484,6 +484,32 @@ def _render_lineage() -> None:
                     + (f", and {len(unmapped_datastream_ids) - 10} more" if len(unmapped_datastream_ids) > 10 else "")
                 )
 
+            with st.expander("Debug: every Property → Datastream → Dataset value extracted/matched"):
+                st.caption(
+                    f"Reading from `{datastream_map_source()}`. Compare the raw columns below directly against what "
+                    "you actually configured — \"Datastream ID (extracted)\" should match a real datastream id from "
+                    "the property's Web SDK extension (Data Collection page → that property → Extensions tab shows "
+                    "the same value per environment); \"Dataset ID (from map)\" should match a real AEP dataset id "
+                    "for the sandbox currently selected in the sidebar."
+                )
+                if not property_edges:
+                    st.caption("No Web SDK datastream ids were extracted from any Data Collection property at all.")
+                else:
+                    st.dataframe(
+                        pd.DataFrame([
+                            {
+                                "Property": e["property"],
+                                "Environment": e["environment"],
+                                "Datastream ID (extracted)": e["datastream_id"],
+                                "In map file?": "Yes" if e["mapped"] else "No",
+                                "Dataset ID (from map)": e["mapped_dataset_id"] or "—",
+                                "Resolved dataset name": e["dataset"] or "—",
+                            }
+                            for e in property_edges
+                        ]),
+                        use_container_width=True, hide_index=True, key="overview_property_datastream_debug_table",
+                    )
+
             unresolved_ids = sorted({row["dataset"] for row in visible_rows if row["dataset"].endswith("(unresolved)")})
             if unresolved_ids:
                 st.caption(
