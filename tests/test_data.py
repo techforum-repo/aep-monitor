@@ -276,3 +276,41 @@ def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatc
     assert matching  # sanity: the connection itself still resolved
     assert all(r["dataset"] == "not-a-real-dataset-id (unresolved)" for r in matching)
     assert all(r["schema"] == "" for r in matching)
+
+
+def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
+    """PR1's mock Web SDK extension carries a datastreamId matching
+    datastream_map.sample.json's one entry, which maps to the "Loyalty
+    Events" dataset — mock mode should demonstrate the whole
+    Property -> Datastream -> Dataset chain out of the box."""
+    dc_rows = data.fetch_dc()
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+    by_property = {e["property"]: e for e in edges}
+
+    assert by_property["acme.com — Web"]["datastream"] == "Prod Web Datastream"
+    assert by_property["acme.com — Web"]["dataset"] == "Loyalty Events"
+    assert by_property["acme.com — Web"]["mapped"] is True
+    assert "Acme Mobile App" not in by_property  # no Web SDK extension configured at all
+
+
+def test_fetch_property_datastream_edges_flags_an_unmapped_datastream(monkeypatch):
+    """A datastream id with no entry in the map still produces a row
+    (flagged, dataset left blank) rather than being silently dropped."""
+    monkeypatch.setattr(mock_module, "MOCK_EXTENSIONS", {
+        **mock_module.MOCK_EXTENSIONS,
+        "PR1": [{"id": "EX1", "attributes": {"name": "Adobe Experience Platform Web SDK", "settings": '{"datastreamId": "not-in-the-map"}'}}],
+    })
+    dc_rows = data.fetch_dc()
+
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+
+    assert len(edges) == 1
+    assert edges[0]["mapped"] is False
+    assert edges[0]["dataset"] == ""
+    assert "unmapped" in edges[0]["datastream"]
+
+
+def test_fetch_property_datastream_edges_returns_nothing_for_a_property_with_no_datastream():
+    dc_rows = data.fetch_dc()
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+    assert not any(e["property"] == "Acme Mobile App" for e in edges)

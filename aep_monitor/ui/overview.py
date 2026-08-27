@@ -6,6 +6,7 @@ import streamlit as st
 
 from .. import alerts, data, database
 from ..config import settings
+from ..datastream_map import datastream_map_source
 from ..errors import friendly_error
 from ..poller import refresh_all
 from .shared import format_timestamp, get_active_sandbox, mark_cache_sandbox, refresh_button, sandbox_changed_since_cache
@@ -173,6 +174,15 @@ def _do_refresh_lineage() -> None:
     active_sandbox = get_active_sandbox()
     try:
         st.session_state["lineage_rows"] = data.fetch_cja_dataset_lineage(sandbox=active_sandbox)
+        # Cached alongside lineage_rows (same sandbox-change trigger, same
+        # cache-marker key) rather than fetched inline in _render_lineage()
+        # — fetch_property_datastream_edges() calls fetch_datasets(), a
+        # live Catalog Service call in live mode; computing it fresh on
+        # every Streamlit rerun (every widget click) would needlessly
+        # repeat that call far more often than the sandbox actually changes.
+        st.session_state["property_datastream_edges"] = data.fetch_property_datastream_edges(
+            st.session_state.dc_rows or [], sandbox=active_sandbox,
+        )
         mark_cache_sandbox("lineage_rows", active_sandbox)
         st.session_state["_lineage_error"] = None
     except Exception as exc:
@@ -182,14 +192,25 @@ def _do_refresh_lineage() -> None:
 # One fixed color per pipeline stage, applied to every node at that stage —
 # not a cycled/generated palette — so a viewer learns "blue = dataset"
 # once and it holds across every Sankey render, not just this session.
-# Teal for schema deliberately avoids the reserved status-red/green hues
-# (see ui/shared.py's _GOOD/_WARNING/_BAD_STATES) — this palette is a
-# stage identity, not a health signal, and must never be confused with one.
-_LINEAGE_STAGE_COLORS = {"schema": "#1fada6", "dataset": "#2a78d6", "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa"}
+# Teal for schema, rose for property, and tan for datastream deliberately
+# avoid the reserved status-red/green hues (see ui/shared.py's
+# _GOOD/_WARNING/_BAD_STATES) — this palette is a stage identity, not a
+# health signal, and must never be confused with one. Property/Datastream
+# feed into Dataset from a second, independent source (Reactor + the
+# git-ignored datastream_map.json — see data.py's
+# fetch_property_datastream_edges()) alongside Schema, not a continuation
+# of the same CJA-side chain, hence the visually distinct hues.
+_LINEAGE_STAGE_COLORS = {
+    "property": "#c65b7c", "datastream": "#8c6d46", "schema": "#1fada6", "dataset": "#2a78d6",
+    "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa",
+}
 # Same order as the pipeline itself (left to right) — used for both the
 # legend and each node's hover text, so "which color is which stage" never
 # has to be inferred or memorized from the caption alone.
-_LINEAGE_STAGE_LABELS = {"schema": "Schema", "dataset": "Dataset", "connection": "Connection", "dataview": "Data View", "project": "Project"}
+_LINEAGE_STAGE_LABELS = {
+    "property": "Property", "datastream": "Datastream", "schema": "Schema", "dataset": "Dataset",
+    "connection": "Connection", "dataview": "Data View", "project": "Project",
+}
 
 
 def _render_lineage_legend() -> None:
@@ -202,7 +223,7 @@ def _render_lineage_legend() -> None:
     st.markdown(f'<div style="margin-bottom:.4rem">{chips}</div>', unsafe_allow_html=True)
 
 
-def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
+def _build_lineage_sankey(rows: list[dict], property_edges: list[dict] | None = None) -> go.Figure:
     """Turns fetch_cja_dataset_lineage()'s flat per-path rows into a
     plotly Sankey's node/link arrays. A node is keyed by (stage, name) —
     not name alone — so a coincidental name collision across stages (e.g.
@@ -236,12 +257,26 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     Each node's hover text is prefixed with its stage ("Schema: X", not
     just "X") — the color legend above the chart (_render_lineage_legend())
     covers the same mapping at a glance, but hover is what actually
-    confirms it for a specific node without cross-referencing the legend."""
+    confirms it for a specific node without cross-referencing the legend.
+
+    `property_edges` (from data.fetch_property_datastream_edges()) is a
+    second, independent source feeding into the *same* Dataset stage
+    alongside Schema — Property -> Datastream -> Dataset, joined onto the
+    CJA-side chain purely by matching dataset *name* (both sides resolve
+    the same dataset id through the same fetch_datasets() lookup, so an
+    identical name is guaranteed to mean the identical dataset). An
+    unmapped datastream (no entry in datastream_map.json yet) still gets
+    its own node — flagged in its own label via `mapped=False` upstream —
+    rather than being silently dropped, but has no outgoing link into
+    Dataset since there's nothing to point it at."""
     node_index: dict[tuple[str, str], int] = {}
     node_labels: list[str] = []
     node_colors: list[str] = []
     node_hover: list[str] = []
-    nodes_per_stage: dict[str, set[str]] = {"schema": set(), "dataset": set(), "connection": set(), "dataview": set(), "project": set()}
+    nodes_per_stage: dict[str, set[str]] = {
+        "property": set(), "datastream": set(), "schema": set(), "dataset": set(),
+        "connection": set(), "dataview": set(), "project": set(),
+    }
 
     def _node(stage: str, name: str) -> int | None:
         if not name:
@@ -263,6 +298,14 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
             _node("dataview", row["dataview"]), _node("project", row["project"]),
         ]
         for a, b in zip(stage_nodes, stage_nodes[1:]):
+            if a is not None and b is not None:
+                link_counts[(a, b)] = link_counts.get((a, b), 0) + 1
+
+    for edge in property_edges or []:
+        prop_idx, datastream_idx, dataset_idx = (
+            _node("property", edge["property"]), _node("datastream", edge["datastream"]), _node("dataset", edge["dataset"]),
+        )
+        for a, b in [(prop_idx, datastream_idx), (datastream_idx, dataset_idx)]:
             if a is not None and b is not None:
                 link_counts[(a, b)] = link_counts.get((a, b), 0) + 1
 
@@ -303,12 +346,15 @@ def _render_lineage() -> None:
     st.divider()
     st.markdown("#### End-to-end data flow")
     st.caption(
-        "XDM Schema → AEP Dataset → CJA Connection → CJA Data View → CJA Project, using confirmed API links: a "
-        "dataset's own schema binding, a connection's own `dataSets` field, its data views' parent-connection "
-        "binding, and a project's data-view binding. "
-        "Data Collection properties are listed separately below, **not** connected into this flow — there's no "
-        "public API for Datastream configuration (which property's Web SDK datastream sends to which dataset), "
-        "so that link can't be discovered programmatically; only whoever configured it knows the mapping. "
+        "(Data Collection) Property → Datastream → XDM Schema → AEP Dataset → CJA Connection → CJA Data View → "
+        "CJA Project. The right five hops are confirmed API links: a dataset's own schema binding, a connection's "
+        "own `dataSets` field, its data views' parent-connection binding, and a project's data-view binding. "
+        "The left two hops close a real gap Adobe doesn't expose via any documented API: a property's Web SDK "
+        "extension already carries its own datastream id (Reactor's own public API), but which dataset that "
+        "datastream forwards to isn't discoverable anywhere — closed with one small, git-ignored, "
+        "human-maintained file (`datastream_map.json`; see README) instead of guessing, so it's shown separately "
+        "in color rather than blended into the confirmed-API chain. A property whose datastream isn't in that "
+        "file yet is flagged below the chart, not silently dropped. "
         "Every unresolved dataset id collapses into one shared node, and the chart is always scoped to one "
         "connection at a time (pick it below) — a real org's full, unfiltered pipeline is reliably too dense to "
         "read at once. Hover any node, or check the legend above the chart, for which color is which stage."
@@ -381,8 +427,34 @@ def _render_lineage() -> None:
                 "sandbox, not this picker, if a connection you expect to see is missing."
             )
             visible_rows = [r for r in rows if r["connection"] == focus]
+
+            # Property -> Datastream -> Dataset: a second, independent
+            # source (Reactor + the git-ignored datastream_map.json — see
+            # data.fetch_property_datastream_edges()) feeding into the
+            # *same* Dataset stage. Cached in session state by
+            # _do_refresh_lineage(), not fetched here — see that
+            # function's docstring. Scoped to only the datasets the
+            # currently focused connection actually uses, same reasoning
+            # as the connection picker itself — an unfiltered join across
+            # every property in the org would just be noise unrelated to
+            # what's on screen.
+            property_edges = st.session_state.get("property_datastream_edges") or []
+            visible_dataset_names = {r["dataset"] for r in visible_rows if r["dataset"]}
+            relevant_property_edges = [e for e in property_edges if e["dataset"] in visible_dataset_names]
+
             _render_lineage_legend()
-            st.plotly_chart(_build_lineage_sankey(visible_rows), use_container_width=True, key="overview_lineage_sankey")
+            st.plotly_chart(
+                _build_lineage_sankey(visible_rows, relevant_property_edges), use_container_width=True, key="overview_lineage_sankey",
+            )
+
+            unmapped_datastream_ids = sorted({e["datastream_id"] for e in property_edges if not e["mapped"]})
+            if unmapped_datastream_ids:
+                st.caption(
+                    f"{len(unmapped_datastream_ids)} Web SDK datastream id(s) found on Data Collection properties with "
+                    f"no entry in `{datastream_map_source()}` yet, so Property → Datastream → Dataset can't chart them: "
+                    + ", ".join(unmapped_datastream_ids[:10])
+                    + (f", and {len(unmapped_datastream_ids) - 10} more" if len(unmapped_datastream_ids) > 10 else "")
+                )
 
             unresolved_ids = sorted({row["dataset"] for row in visible_rows if row["dataset"].endswith("(unresolved)")})
             if unresolved_ids:
@@ -393,15 +465,23 @@ def _render_lineage() -> None:
                     "a connection's dataset ids aren't guaranteed to live in the same sandbox as the one currently selected."
                 )
 
-    st.markdown("###### Data Collection properties (not linked above)")
+    st.markdown("###### Data Collection properties")
     dc_rows = st.session_state.dc_rows or []
     if not dc_rows:
         st.caption("No Data Collection properties found.")
     else:
+        st.caption(
+            "A property with a mapped Web SDK datastream also appears in the chart above (as a Property node feeding "
+            "into Dataset via Datastream, when its dataset matches the focused connection) — everything else here "
+            "(a property with no Web SDK extension, or a datastream not yet in `datastream_map.json`) has no way "
+            "into that chart and is only visible in this table."
+        )
+        datastream_by_property = {e["property"]: e["datastream"] for e in (st.session_state.get("property_datastream_edges") or [])}
         st.dataframe(
             pd.DataFrame([
                 {
                     "Property": r["property_name"],
+                    "Datastream": datastream_by_property.get(r["property_name"], "—"),
                     "Extensions": r["extension_count"],
                     "Rules": r["rule_count"],
                     "Data elements": r["data_element_count"],

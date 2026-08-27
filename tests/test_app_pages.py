@@ -47,21 +47,30 @@ def test_page_renders_without_exception(page):
     assert at.exception == []
 
 
-def test_overview_page_shows_the_end_to_end_lineage_and_unlinked_dc_properties():
-    """Overview's new "End-to-end data flow" section — a Sankey of AEP
-    Dataset -> CJA Connection -> Data View -> Project, plus DC properties
-    listed separately underneath as explicitly not connected into it (no
-    public Datastream API to discover that link programmatically)."""
+def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
+    """Overview's "End-to-end data flow" section — a Sankey of Property ->
+    Datastream -> Schema -> Dataset -> Connection -> Data View -> Project,
+    the first two hops closed via Reactor + the git-ignored
+    datastream_map.json (falling back to the committed sample in mock
+    mode) rather than Adobe's undocumented Datastreams API."""
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()
     assert at.exception == []
 
     markdown_text = " ".join(m.value for m in at.markdown)
     assert "End-to-end data flow" in markdown_text
-    assert "Data Collection properties (not linked above)" in markdown_text
+    assert "Data Collection properties" in markdown_text
 
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
-    assert len(dc_table) == 2  # both mock DC properties, listed unconnected
+    assert len(dc_table) == 2  # both mock DC properties
+    # PR1's mock Web SDK extension has a datastreamId matching
+    # datastream_map.sample.json's one entry — mock mode should
+    # demonstrate the full chain out of the box, same as everything else.
+    pr1_row = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]
+    assert pr1_row["Datastream"] == "Prod Web Datastream"
+    # PR2 has no Web SDK extension configured at all in mock data.
+    pr2_row = dc_table[dc_table["Property"] == "Acme Mobile App"].iloc[0]
+    assert pr2_row["Datastream"] == "—"
 
     # "All connections" was removed — a real org's full, unfiltered pipeline
     # is reliably too dense to read, so the picker always scopes to one.

@@ -154,3 +154,41 @@ def test_an_unresolved_dataset_has_no_schema_node_but_the_rest_of_the_chain_stil
     labels = list(fig.data[0].node.label)
     assert "Unresolved dataset" in labels
     assert "conn" in labels  # the rest of the chain, unaffected by the missing schema stage
+
+
+def test_property_edges_merge_into_the_same_dataset_node_as_the_cja_side_chain():
+    """The whole point of joining on dataset *name*: a property's
+    Datastream feeding "Loyalty Events" must land on the exact same node
+    the CJA-side Schema -> Dataset chain already created for it, not a
+    second, disconnected "Loyalty Events" node."""
+    rows = [_row(schema="Loyalty Schema", dataset="Loyalty Events")]
+    property_edges = [{"property": "acme.com — Web", "datastream": "Prod Web Datastream", "dataset": "Loyalty Events"}]
+
+    fig = _build_lineage_sankey(rows, property_edges)
+
+    labels = list(fig.data[0].node.label)
+    assert labels.count("Loyalty Events") == 1  # one shared node, not two
+    assert "acme.com — Web" in labels
+    assert "Prod Web Datastream" in labels
+
+
+def test_an_unmapped_datastream_gets_a_node_but_no_link_into_dataset():
+    """A datastream with no dataset (unmapped, per
+    fetch_property_datastream_edges()) still shows up as its own node —
+    visible, not silently dropped — but has nothing to link into."""
+    property_edges = [{"property": "acme.com — Web", "datastream": "abc-123 (unmapped)", "dataset": ""}]
+
+    fig = _build_lineage_sankey([], property_edges)
+
+    labels = list(fig.data[0].node.label)
+    assert "abc-123 (unmapped)" in labels
+    assert len(fig.data[0].link.source) == 1  # property -> datastream only, nothing past it
+
+
+def test_build_lineage_sankey_works_with_no_property_edges_at_all():
+    """property_edges is optional — every call site that existed before
+    this feature was added passes none at all, and must keep working
+    unchanged (no Property/Datastream nodes conjured from nothing)."""
+    fig = _build_lineage_sankey([_row()])
+    labels = list(fig.data[0].node.label)
+    assert labels == ["sch", "ds", "conn", "dv", "proj"]

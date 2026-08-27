@@ -16,7 +16,7 @@ provisioning to cross-product monitoring.
 
 | Page | API | Signal |
 |---|---|---|
-| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow (XDM Schema → AEP Dataset → CJA Connection → Data View → Project, one connection at a time) with Data Collection properties listed alongside, explicitly not wired into it |
+| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow (Property → Datastream → XDM Schema → AEP Dataset → CJA Connection → Data View → Project, one connection at a time) — the Property/Datastream hops closed via Reactor plus a small git-ignored mapping file, since no public Adobe API exposes that link |
 | **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend — plus a **Connector** column resolving each flow's `flowSpec` to a display name, since `/flows` returns inbound ingestion and outbound activation flows undifferentiated (see Known Limitations) |
 | **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
 | **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
@@ -641,26 +641,57 @@ once per alert, not on every subsequent poll while it's still open.
   (resolves to an Enterprise ID), assign as Product Profile
   Administrator. The CJA and SDR pages show this same explanation in-app
   when Connections comes back empty.
-- **Overview's end-to-end data flow** (`fetch_cja_dataset_lineage()` in
-  `data.py`, `_build_lineage_sankey()` in `ui/overview.py`) charts XDM
-  Schema → AEP Dataset → CJA Connection → Data View → Project — every hop
-  a genuinely confirmed cross-product link: a dataset's own schema binding
-  (already used on the Datasets page/Compare), and a CJA connection's own
-  `dataSets` field (`expansion=dataSets`, confirmed via Adobe's docs —
-  `{dataSetId, domain, type, timestampId, visitorId, identityNamespace,
-  usePrimaryIdNamespace, identityMap, name, streaming}` per entry).
-  Data Collection properties/rules/data elements are listed separately
-  underneath, deliberately **not** wired into this flow — there is no
-  official, documented API for Datastream configuration (which property's
-  Web SDK datastream sends to which dataset). Confirmed, not just assumed:
-  Adobe's own community forum has staff confirming an internal API exists
-  at `edge.adobe.io` ("DataStreams" were originally called "EdgeConfigs")
-  but explicitly *not* publicly documented or supported — "not really a
-  public API in the sense that it has not been made publicly aware nor
-  does it come with any up-to-date documentation." Building against it
-  would be a different risk category from every other integration in this
-  app (all built against Adobe's actual published docs), so it's left out
-  rather than reverse-engineered from network traffic.
+- **Overview's end-to-end data flow** (`fetch_cja_dataset_lineage()` and
+  `fetch_property_datastream_edges()` in `data.py`, `_build_lineage_sankey()`
+  in `ui/overview.py`) charts **(Data Collection) Property → Datastream →
+  XDM Schema → AEP Dataset → CJA Connection → CJA Data View → CJA Project**.
+
+  The right five hops are genuinely confirmed cross-product links: a
+  dataset's own schema binding (already used on the Datasets page/Compare),
+  and a CJA connection's own `dataSets` field (`expansion=dataSets`,
+  confirmed via Adobe's docs — `{dataSetId, domain, type, timestampId,
+  visitorId, identityNamespace, usePrimaryIdNamespace, identityMap, name,
+  streaming}` per entry).
+
+  The left two hops close a real gap Adobe doesn't expose via any
+  documented API — but not by guessing at it. There is no official,
+  documented API for Datastream *configuration* (which datastream a
+  property's Web SDK extension is set to use, and which dataset that
+  datastream forwards to). Confirmed, not just assumed: Adobe's own
+  community forum has staff confirming an internal API exists at
+  `edge.adobe.io` ("DataStreams" were originally called "EdgeConfigs") but
+  explicitly *not* publicly documented or supported — "not really a public
+  API in the sense that it has not been made publicly aware nor does it
+  come with any up-to-date documentation." Building against it would be a
+  different risk category from every other integration in this app (all
+  built against Adobe's actual published docs), so it's not used.
+
+  Instead, the *first* hop (property → datastream id) is fully automated
+  through an API this app already uses: a property's Web SDK extension
+  carries its own configured datastream id in Reactor's own, fully public
+  `GET /properties/{id}/extensions` response — confirmed via Adobe's docs
+  that the *list* response (not just the single-item GET) already includes
+  each extension's full `settings` attribute, a JSON-*encoded string* (not
+  a nested object) containing `datastreamId` (or the confirmed-deprecated
+  `edgeConfigId`, checked as a fallback). Detected by the presence of that
+  setting key itself, not by matching the Web SDK extension's exact
+  package name — Adobe's docs don't show a live example of that string, so
+  keying off a setting it's uniquely known to carry is the more robust
+  signal (`clients/reactor.py`'s `_extract_datastream_id()`).
+
+  The *second* hop (datastream id → its name and destination dataset) is
+  the one piece no public API exposes at all, so it's closed with one
+  small, git-ignored, human-maintained file instead: `datastream_map.json`
+  (`aep_monitor/datastream_map.py`), `{datastream_id: {name, dataset_id}}`
+  — the same `.env`/`.env.example` convention as every other local,
+  tenant-specific file in this app, with `datastream_map.sample.json`
+  committed as both the template and mock mode's demo content. This is the
+  one deliberate manual step in an otherwise fully-automated chain — a
+  human who configured Datastreams already knows this mapping; nothing
+  public exposes it for this app to discover on its own. A datastream id
+  with no entry in the file still gets a node (flagged "(unmapped)"),
+  never silently dropped, and a caption under the chart lists exactly
+  which ones need adding.
 
   The chart is always scoped to one connection at a time via a **"Focus on
   connection"** picker — an unfiltered, all-connections view was tried
@@ -673,8 +704,14 @@ once per alert, not on every subsequent poll while it's still open.
   carry no sandbox field of their own to check), with a "Show connections
   with no resolved data in this sandbox too" checkbox as an explicit
   opt-out so a connection is never silently unreachable, only filtered by
-  default. A dataset id a connection references but the active sandbox's
-  own dataset list can't resolve (a real possibility — Datasets are
+  default. Property/Datastream edges are further scoped to only the
+  dataset(s) the focused connection actually uses — an unfiltered join
+  across every property in the org would just be noise unrelated to what's
+  on screen; the Data Collection properties table underneath the chart
+  shows every property's resolved datastream regardless of focus.
+
+  A dataset id a connection references but the active sandbox's own
+  dataset list can't resolve (a real possibility — Datasets are
   sandbox-scoped, Connections are org-wide, so a connection can reference
   a dataset from a different sandbox) collapses into one shared
   "Unresolved dataset" node rather than one node per raw id — reported
@@ -683,7 +720,7 @@ once per alert, not on every subsequent poll while it's still open.
   specific raw ids are still listed in a caption under the chart. Chart
   height scales with whichever stage has the most distinct nodes (not a
   fixed size) for the same reason, and a color-coded legend plus
-  stage-prefixed hover text on every node ("Schema: X") make the five
+  stage-prefixed hover text on every node ("Schema: X") make the seven
   stage colors identifiable without memorizing them.
 - **SDR page** (`aep_monitor/clients/cja.py`'s dimensions/metrics
   endpoints, `aep_monitor/clients/schema_registry.py`) is the newest,
@@ -752,12 +789,15 @@ business logic vs. UI code belongs, how to add a new Adobe API integration) and
 ```
 app.py                   Streamlit entry point / page router
 poller_cli.py             Standalone poll-once-and-exit script for cron
+datastream_map.sample.json  Template + mock mode's demo content for the file below (committed)
+datastream_map.json         Real, tenant-specific datastream->dataset mapping (git-ignored, see below)
 aep_monitor/
   config.py                Settings (pydantic-settings, .env-backed)
   auth.py                   Adobe IMS token issuance/caching
   errors.py, retry.py       Friendly errors + transient-failure retry policy
   database.py               SQLite: history snapshots + alert log
   data.py                    Mock/live fetch, parsed into consistent rows
+  datastream_map.py          Loader for datastream_map.json/.sample.json (see Overview's lineage chart)
   poller.py                  fetch -> snapshot -> evaluate alerts, per product
   alerts.py                  Alert conditions, dedupe, Slack push
   clients/

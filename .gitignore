@@ -20,6 +20,13 @@ env/
 !.env.example
 
 # ==========================
+# Datastream mapping (tenant-specific — no public Adobe API exposes this;
+# see aep_monitor/datastream_map.py and README Known Limitations)
+# ==========================
+datastream_map.json
+!datastream_map.sample.json
+
+# ==========================
 # SQLite Databases
 # ==========================
 *.db

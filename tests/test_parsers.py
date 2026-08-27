@@ -82,6 +82,32 @@ def test_parse_extension_flags_rejected_and_failed_as_issues_but_not_pending():
     assert approved["has_issue"] is False
 
 
+def test_parse_extension_extracts_datastream_id_from_the_json_encoded_settings_string():
+    """Confirmed via Adobe's docs: `settings` is a JSON-*encoded string*
+    even in the list response, not a nested object — and detected by the
+    setting key itself (not the extension's name), since Adobe's docs
+    don't show a live example of the Web SDK extension's exact name/
+    delegate_descriptor_id to match against."""
+    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": "{\"datastreamId\": \"abc-123\"}"}})
+    assert ext["datastream_id"] == "abc-123"
+
+
+def test_parse_extension_falls_back_to_the_deprecated_edge_config_id_key():
+    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": "{\"edgeConfigId\": \"legacy-456\"}"}})
+    assert ext["datastream_id"] == "legacy-456"
+
+
+def test_parse_extension_datastream_id_is_empty_for_a_non_web_sdk_extension():
+    ext = reactor.parse_extension({"id": "e1", "attributes": {"name": "Core"}})
+    assert ext["datastream_id"] == ""
+
+
+def test_parse_extension_does_not_crash_on_malformed_settings():
+    assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "not valid json"}})["datastream_id"] == ""
+    assert reactor.parse_extension({"id": "e1", "attributes": {"settings": 42}})["datastream_id"] == ""
+    assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "[1,2,3]"}})["datastream_id"] == ""
+
+
 def test_parse_library_flags_failed_and_rejected_states_as_bad():
     failed = reactor.parse_library({"id": "l1", "attributes": {"name": "Staging", "state": "failed"}})
     published = reactor.parse_library({"id": "l2", "attributes": {"name": "Prod", "state": "published"}})

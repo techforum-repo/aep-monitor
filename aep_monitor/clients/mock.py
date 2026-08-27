@@ -99,7 +99,20 @@ MOCK_PROPERTIES: list[dict[str, Any]] = [
 
 MOCK_EXTENSIONS: dict[str, list[dict[str, Any]]] = {
     "PR1": [
-        {"id": "EX1", "attributes": {"name": "Adobe Experience Platform Web SDK", "published": True, "review_status": "approved"}},
+        # "settings" is a JSON-*encoded string* here, not a nested object —
+        # confirmed via Adobe's own docs example response shape (see
+        # clients/reactor.py's _extract_datastream_id() docstring). The
+        # datastreamId matches datastream_map.sample.json's one entry,
+        # which maps to the "Loyalty Events" dataset — so mock mode
+        # demonstrates the full Property -> Datastream -> Dataset chain
+        # out of the box, same as every other mock-first feature here.
+        {
+            "id": "EX1",
+            "attributes": {
+                "name": "Adobe Experience Platform Web SDK", "published": True, "review_status": "approved",
+                "settings": "{\"datastreamId\": \"00000000-0000-0000-0000-000000000000\", \"edgeDomain\": \"edge.acmecorp.com\"}",
+            },
+        },
         {"id": "EX2", "attributes": {"name": "Core", "published": True, "review_status": "approved"}},
         {"id": "EX3", "attributes": {"name": "Custom Consent Extension", "published": False, "review_status": "rejected"}},
     ],

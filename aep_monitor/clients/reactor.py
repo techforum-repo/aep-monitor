@@ -17,6 +17,7 @@ implementation... is in flux" as the feature evolves, so field names
 than anywhere else in this file.
 """
 
+import json
 from typing import Any
 
 import httpx
@@ -97,6 +98,38 @@ def parse_property(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_datastream_id(attrs: dict[str, Any]) -> str:
+    """The Web SDK extension's own configured datastream id — confirmed
+    via Adobe's docs that Reactor's extensions *list* response (not just
+    the single-item GET) already includes each extension's full `settings`
+    attribute, so no extra per-extension call is needed to get it.
+
+    `settings` is a JSON-*encoded string* per Adobe's own example response
+    (`"settings": "{...}"`), not a nested object — parsed defensively here
+    since a malformed value shouldn't crash the whole property fetch.
+
+    Detected by the presence of the setting key itself (`datastreamId`, or
+    its confirmed-deprecated predecessor `edgeConfigId` as a fallback for
+    an older/unmigrated configuration) rather than by matching the Web
+    SDK extension's own package name/delegate_descriptor_id — Adobe's own
+    docs don't show a live example of that exact string for this specific
+    extension, so keying off a setting name it's uniquely known to carry
+    is the more robust signal here, not a guess this app can't verify."""
+    settings_raw = attrs.get("settings")
+    if isinstance(settings_raw, str):
+        try:
+            settings_obj = json.loads(settings_raw)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+    elif isinstance(settings_raw, dict):
+        settings_obj = settings_raw
+    else:
+        return ""
+    if not isinstance(settings_obj, dict):
+        return ""
+    return str(settings_obj.get("datastreamId") or settings_obj.get("edgeConfigId") or "")
+
+
 def parse_extension(item: dict[str, Any]) -> dict[str, Any]:
     attrs = safe_dict(item.get("attributes"))
     review_status = str(attrs.get("review_status") or attrs.get("reviewStatus") or "").lower()
@@ -106,6 +139,7 @@ def parse_extension(item: dict[str, Any]) -> dict[str, Any]:
         "published": bool(attrs.get("published")),
         "review_status": review_status,
         "has_issue": review_status in {"rejected", "failed"},
+        "datastream_id": _extract_datastream_id(attrs),
         "raw": item,
     }
 
