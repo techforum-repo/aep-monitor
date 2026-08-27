@@ -668,16 +668,34 @@ once per alert, not on every subsequent poll while it's still open.
 
   Instead, the *first* hop (property → datastream id) is fully automated
   through an API this app already uses: a property's Web SDK extension
-  carries its own configured datastream id in Reactor's own, fully public
-  `GET /properties/{id}/extensions` response — confirmed via Adobe's docs
-  that the *list* response (not just the single-item GET) already includes
-  each extension's full `settings` attribute, a JSON-*encoded string* (not
-  a nested object) containing `datastreamId` (or the confirmed-deprecated
-  `edgeConfigId`, checked as a fallback). Detected by the presence of that
-  setting key itself, not by matching the Web SDK extension's exact
-  package name — Adobe's docs don't show a live example of that string, so
-  keying off a setting it's uniquely known to carry is the more robust
-  signal (`clients/reactor.py`'s `_extract_datastream_id()`).
+  carries its own configured datastream id(s) in Reactor's own, fully
+  public `GET /properties/{id}/extensions` response — confirmed via
+  Adobe's docs that the *list* response (not just the single-item GET)
+  already includes each extension's full `settings` attribute, a
+  JSON-*encoded string* (not a nested object) sitting alongside many other
+  unrelated configuration keys. Detected by the presence of these setting
+  keys themselves, not by matching the Web SDK extension's exact package
+  name — Adobe's docs don't show a live example of that string, so keying
+  off settings it's uniquely known to carry is the more robust signal
+  (`clients/reactor.py`'s `_extract_datastream_ids()`).
+
+  Reported live, and easy to miss: a single property can configure a
+  genuinely **different datastream per build environment** — production,
+  staging, and development each get their own id, not just one flat
+  value. `datastreamId`/`edgeConfigId` (`edgeConfigId` confirmed-deprecated
+  in favor of `datastreamId`) covers production; separate flat keys cover
+  the other two, checked under both the older naming
+  (`stagingEdgeConfigId`/`developmentEdgeConfigId`, confirmed live) and the
+  newer `datastreamId`-style rename applied consistently
+  (`stagingDatastreamId`/`developmentDatastreamId`, not independently
+  confirmed for these two specifically). Every environment with a
+  configured id becomes its own row/node, labeled with that environment
+  (e.g. "Prod Web Datastream (production)") so two different real
+  datastreams on the same property are never conflated into one. The DC
+  page's Extensions tab shows every environment's raw id directly (and a
+  "Raw extension responses" expander) — the fastest way to check this
+  extraction against what a live tenant's `settings` actually contains
+  before assuming `datastream_map.json` itself is wrong.
 
   The *second* hop (datastream id → its name and destination dataset) is
   the one piece no public API exposes at all, so it's closed with one
@@ -689,9 +707,13 @@ once per alert, not on every subsequent poll while it's still open.
   one deliberate manual step in an otherwise fully-automated chain — a
   human who configured Datastreams already knows this mapping; nothing
   public exposes it for this app to discover on its own. A datastream id
-  with no entry in the file still gets a node (flagged "(unmapped)"),
-  never silently dropped, and a caption under the chart lists exactly
-  which ones need adding.
+  with no entry in the file still gets a node (flagged "(unmapped,
+  {environment})"), never silently dropped, and a caption under the chart
+  lists exactly which ones need adding. Editing this file and clicking
+  **"Refresh everything"** on the Overview page picks it up immediately —
+  an earlier version of this app only ever recomputed the lineage chart on
+  a *sandbox change*, silently ignoring a plain file edit; the refresh
+  button now re-reads it too.
 
   The chart is always scoped to one connection at a time via a **"Focus on
   connection"** picker — an unfiltered, all-connections view was tried

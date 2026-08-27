@@ -309,17 +309,24 @@ def fetch_cja_dataset_lineage(sandbox: str | None = None) -> list[dict[str, Any]
 
 
 def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str | None = None) -> list[dict[str, Any]]:
-    """{property, datastream_id, datastream, dataset, mapped} rows — the one
-    remaining hop Overview's lineage chart can close without guessing at
-    Adobe's undocumented Datastreams/EdgeConfig API (see README Known
-    Limitations): a property's Web SDK extension already carries its own
-    configured datastream id in Reactor's own, fully public, already-used
-    API (clients/reactor.py's parse_extension()/_extract_datastream_id()).
-    What's missing — the datastream's *name* and which dataset it forwards
-    to — isn't exposed by any documented Adobe API at all, so it's closed
-    with one small, git-ignored, human-maintained file instead (see
-    datastream_map.py) — the one deliberate manual step in an otherwise
-    fully-automated chain.
+    """{property, environment, datastream_id, datastream, dataset, mapped}
+    rows — the one remaining hop Overview's lineage chart can close
+    without guessing at Adobe's undocumented Datastreams/EdgeConfig API
+    (see README Known Limitations): a property's Web SDK extension already
+    carries its own configured datastream id(s) in Reactor's own, fully
+    public, already-used API (clients/reactor.py's parse_extension()/
+    _extract_datastream_ids()). What's missing — a datastream's *name* and
+    which dataset it forwards to — isn't exposed by any documented Adobe
+    API at all, so it's closed with one small, git-ignored,
+    human-maintained file instead (see datastream_map.py) — the one
+    deliberate manual step in an otherwise fully-automated chain.
+
+    Reported live: a single property can configure a genuinely *different*
+    datastream per build environment (production/staging/development) —
+    one row per (property, environment) pair with a configured id, not
+    just one per property. Two environments happening to share the exact
+    same underlying datastream id both still get their own row/label (kept
+    distinguishable by environment) rather than being silently collapsed.
 
     Takes `dc_rows` (already-fetched property rows, e.g. from
     st.session_state) rather than fetching Data Collection itself — that
@@ -328,32 +335,38 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
     refresh_all() already do; this just reuses it instead of duplicating
     that entire N+1 cost only to read one field off it.
 
-    A property with no Web SDK extension (or an unconfigured/empty
-    datastream id) contributes no row — nothing to chart for it. A
-    datastream id with no entry in datastream_map.json still gets a row
-    (`mapped=False`, `dataset=""`) rather than being silently dropped, so
-    "this property's datastream isn't mapped yet" stays visible instead of
-    just disappearing."""
+    A property with no Web SDK extension (or no environment configured at
+    all) contributes no row — nothing to chart for it. A datastream id
+    with no entry in datastream_map.json still gets a row (`mapped=False`,
+    `dataset=""`) rather than being silently dropped, so "this property's
+    datastream isn't mapped yet" stays visible instead of just
+    disappearing."""
     datastream_map = load_datastream_map()
     dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
 
     rows: list[dict[str, Any]] = []
     for prop in dc_rows:
-        datastream_id = next((e["datastream_id"] for e in prop.get("extensions", []) if e.get("datastream_id")), "")
-        if not datastream_id:
-            continue
-        mapped_entry = datastream_map.get(datastream_id)
-        if mapped_entry:
-            datastream_label = mapped_entry["name"] or datastream_id
-            dataset_id = mapped_entry["dataset_id"]
-            dataset_label = dataset_names.get(dataset_id, f"{dataset_id} (unresolved)" if dataset_id else "")
-        else:
-            datastream_label = f"{datastream_id} (unmapped)"
-            dataset_label = ""
-        rows.append({
-            "property": prop["property_name"], "datastream_id": datastream_id, "datastream": datastream_label,
-            "dataset": dataset_label, "mapped": mapped_entry is not None,
-        })
+        # A property can have more than one extension with settings (rare,
+        # but not impossible) — merge every environment found across all
+        # of them rather than assuming exactly one extension carries them.
+        datastream_ids: dict[str, str] = {}
+        for ext in prop.get("extensions", []):
+            for environment, datastream_id in (ext.get("datastream_ids") or {}).items():
+                datastream_ids.setdefault(environment, datastream_id)
+
+        for environment, datastream_id in datastream_ids.items():
+            mapped_entry = datastream_map.get(datastream_id)
+            if mapped_entry:
+                datastream_label = f"{mapped_entry['name'] or datastream_id} ({environment})"
+                dataset_id = mapped_entry["dataset_id"]
+                dataset_label = dataset_names.get(dataset_id, f"{dataset_id} (unresolved)" if dataset_id else "")
+            else:
+                datastream_label = f"{datastream_id} (unmapped, {environment})"
+                dataset_label = ""
+            rows.append({
+                "property": prop["property_name"], "environment": environment, "datastream_id": datastream_id,
+                "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
+            })
     return rows
 
 

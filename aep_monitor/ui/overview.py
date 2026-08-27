@@ -499,17 +499,19 @@ def _render_lineage() -> None:
         st.caption("No Data Collection properties found.")
     else:
         st.caption(
-            "A property with a mapped Web SDK datastream also appears in the chart above (as a Property node feeding "
-            "into Dataset via Datastream, when its dataset matches the focused connection) — everything else here "
-            "(a property with no Web SDK extension, or a datastream not yet in `datastream_map.json`) has no way "
-            "into that chart and is only visible in this table."
+            "A property with a mapped Web SDK datastream also appears in the chart above, as a Property node feeding "
+            "into Dataset via Datastream — a property can configure a *different* datastream per environment "
+            "(production/staging/development), each shown separately below and in the chart. A property with no "
+            "Web SDK extension configured at all has no way into that chart and is only visible in this table."
         )
-        datastream_by_property = {e["property"]: e["datastream"] for e in (st.session_state.get("property_datastream_edges") or [])}
+        datastreams_by_property: dict[str, list[str]] = {}
+        for e in st.session_state.get("property_datastream_edges") or []:
+            datastreams_by_property.setdefault(e["property"], []).append(e["datastream"])
         st.dataframe(
             pd.DataFrame([
                 {
                     "Property": r["property_name"],
-                    "Datastream": datastream_by_property.get(r["property_name"], "—"),
+                    "Datastream": ", ".join(datastreams_by_property.get(r["property_name"], [])) or "—",
                     "Extensions": r["extension_count"],
                     "Rules": r["rule_count"],
                     "Data elements": r["data_element_count"],

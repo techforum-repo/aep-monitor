@@ -63,11 +63,13 @@ def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
 
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
     assert len(dc_table) == 2  # both mock DC properties
-    # PR1's mock Web SDK extension has a datastreamId matching
-    # datastream_map.sample.json's one entry — mock mode should
-    # demonstrate the full chain out of the box, same as everything else.
-    pr1_row = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]
-    assert pr1_row["Datastream"] == "Prod Web Datastream"
+    # PR1's mock Web SDK extension configures three environment-specific
+    # datastreams (production/staging/development) — mock mode should
+    # demonstrate the full chain, and the unmapped case, out of the box.
+    pr1_datastream = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
+    assert "Prod Web Datastream (production)" in pr1_datastream
+    assert "Staging Web Datastream (staging)" in pr1_datastream
+    assert "unmapped, development" in pr1_datastream
     # PR2 has no Web SDK extension configured at all in mock data.
     pr2_row = dc_table[dc_table["Property"] == "Acme Mobile App"].iloc[0]
     assert pr2_row["Datastream"] == "—"
@@ -140,7 +142,7 @@ def test_overview_lineage_renders_without_exception_when_focused_on_a_connection
 
     assert at.exception == []
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
-    assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"] == "Prod Web Datastream"
+    assert "Prod Web Datastream (production)" in dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
 
 
 def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch):
@@ -174,7 +176,11 @@ def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch)
 
     assert at.exception == []
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
-    assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"] == "Prod Web Datastream"
+    # Production now resolves; staging/development are still unmapped in
+    # this patched map (only the production id was added to it above).
+    pr1_datastream = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
+    assert "Prod Web Datastream (production)" in pr1_datastream
+    assert "unmapped, staging" in pr1_datastream
 
 
 def test_sdr_page_loads_dataview_components_and_schema_fields_on_selection():

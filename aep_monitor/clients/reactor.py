@@ -98,36 +98,64 @@ def parse_property(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extract_datastream_id(attrs: dict[str, Any]) -> str:
-    """The Web SDK extension's own configured datastream id — confirmed
-    via Adobe's docs that Reactor's extensions *list* response (not just
-    the single-item GET) already includes each extension's full `settings`
+def _extract_datastream_ids(attrs: dict[str, Any]) -> dict[str, str]:
+    """{environment: datastream_id} for every environment override this
+    Web SDK extension's settings actually carry — confirmed via Adobe's
+    docs that Reactor's extensions *list* response (not just the
+    single-item GET) already includes each extension's full `settings`
     attribute, so no extra per-extension call is needed to get it.
 
     `settings` is a JSON-*encoded string* per Adobe's own example response
-    (`"settings": "{...}"`), not a nested object — parsed defensively here
-    since a malformed value shouldn't crash the whole property fetch.
+    (`"settings": "{...}"`), not a nested object, sitting alongside many
+    other unrelated configuration keys — parsed defensively here since a
+    malformed value shouldn't crash the whole property fetch, and every
+    other key is simply ignored.
 
-    Detected by the presence of the setting key itself (`datastreamId`, or
-    its confirmed-deprecated predecessor `edgeConfigId` as a fallback for
-    an older/unmigrated configuration) rather than by matching the Web
-    SDK extension's own package name/delegate_descriptor_id — Adobe's own
-    docs don't show a live example of that exact string for this specific
-    extension, so keying off a setting name it's uniquely known to carry
-    is the more robust signal here, not a guess this app can't verify."""
+    Reported live, not something Adobe's own docs describe in one place: a
+    single property can configure a genuinely *different* datastream per
+    build environment — `datastreamId`/`edgeConfigId` for production
+    (`edgeConfigId` confirmed-deprecated in favor of `datastreamId`), plus
+    separate flat keys for staging/development. Both the older
+    `stagingEdgeConfigId`/`developmentEdgeConfigId` naming (confirmed live)
+    and the newer `datastreamId`-style rename applied consistently
+    (`stagingDatastreamId`/`developmentDatastreamId`) are checked, since
+    which one a given tenant's extension version actually uses isn't
+    confirmed either way — this app has not seen a live example
+    confirming the newer names exist for staging/development specifically,
+    only that the pattern of the rename holds for the production key.
+
+    Detected by the presence of these setting keys themselves, not by
+    matching the Web SDK extension's own package name/delegate_descriptor_id
+    — Adobe's own docs don't show a live example of that exact string for
+    this specific extension, so keying off a setting name it's uniquely
+    known to carry is the more robust signal here, not a guess this app
+    can't verify. Only environments with a non-empty value are included —
+    an environment with no override configured is absent from the result,
+    not an empty-string entry."""
     settings_raw = attrs.get("settings")
     if isinstance(settings_raw, str):
         try:
             settings_obj = json.loads(settings_raw)
         except (json.JSONDecodeError, TypeError):
-            return ""
+            return {}
     elif isinstance(settings_raw, dict):
         settings_obj = settings_raw
     else:
-        return ""
+        return {}
     if not isinstance(settings_obj, dict):
-        return ""
-    return str(settings_obj.get("datastreamId") or settings_obj.get("edgeConfigId") or "")
+        return {}
+
+    result: dict[str, str] = {}
+    production_id = settings_obj.get("datastreamId") or settings_obj.get("edgeConfigId")
+    if production_id:
+        result["production"] = str(production_id)
+    staging_id = settings_obj.get("stagingDatastreamId") or settings_obj.get("stagingEdgeConfigId")
+    if staging_id:
+        result["staging"] = str(staging_id)
+    development_id = settings_obj.get("developmentDatastreamId") or settings_obj.get("developmentEdgeConfigId")
+    if development_id:
+        result["development"] = str(development_id)
+    return result
 
 
 def parse_extension(item: dict[str, Any]) -> dict[str, Any]:
@@ -139,7 +167,7 @@ def parse_extension(item: dict[str, Any]) -> dict[str, Any]:
         "published": bool(attrs.get("published")),
         "review_status": review_status,
         "has_issue": review_status in {"rejected", "failed"},
-        "datastream_id": _extract_datastream_id(attrs),
+        "datastream_ids": _extract_datastream_ids(attrs),
         "raw": item,
     }
 

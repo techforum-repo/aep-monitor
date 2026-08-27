@@ -73,10 +73,37 @@ def render() -> None:
         ["Extensions", "Rules", "Libraries", "Environments", "Data Elements"]
     )
     with tab_ext:
-        for ext in selected_row.get("extensions", []):
-            st.markdown(f"- **{ext['name']}** — {status_pill(ext['review_status'] or ('published' if ext['published'] else 'unpublished'))}")
-        if not selected_row.get("extensions"):
+        extensions = selected_row.get("extensions", [])
+        for ext in extensions:
+            line = f"- **{ext['name']}** — {status_pill(ext['review_status'] or ('published' if ext['published'] else 'unpublished'))}"
+            # Surfaced directly, not just buried in the raw JSON below —
+            # this is the field the Overview lineage chart's Property ->
+            # Datastream -> Dataset hop depends on (see clients/reactor.py's
+            # _extract_datastream_ids()); showing it here (including the
+            # empty case) is the fastest way to check whether that
+            # extraction actually found anything on this tenant before
+            # assuming datastream_map.json itself is wrong. A property can
+            # configure a *different* datastream per environment
+            # (production/staging/development) — every one found is shown.
+            datastream_ids = ext.get("datastream_ids") or {}
+            if datastream_ids:
+                line += " — " + ", ".join(f"**{env}**: `{ds_id}`" for env, ds_id in datastream_ids.items())
+            else:
+                line += " — *no datastream ID found in this extension's settings*"
+            st.markdown(line)
+        if not extensions:
             st.caption("No extensions.")
+        else:
+            with st.expander("Raw extension responses"):
+                st.caption(
+                    "Check this against clients/reactor.py's _extract_datastream_ids() if a Datastream ID above "
+                    "looks wrong or is missing an environment — it reads `datastreamId`/`edgeConfigId` (production), "
+                    "`stagingDatastreamId`/`stagingEdgeConfigId` (staging), and `developmentDatastreamId`/"
+                    "`developmentEdgeConfigId` (development) from this raw `settings` "
+                    "field, which Adobe returns as a JSON-*encoded string*, not a nested object."
+                )
+                for ext in extensions:
+                    st.json(ext["raw"], expanded=False)
     with tab_rules:
         for rule in selected_row.get("rules", []):
             state = "enabled" if rule["enabled"] else "disabled"

@@ -279,19 +279,29 @@ def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatc
 
 
 def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
-    """PR1's mock Web SDK extension carries a datastreamId matching one of
-    datastream_map.sample.json's entries (a flat object, one entry per
-    datastream — this is the entry that maps to the "Loyalty Events"
-    dataset) — mock mode should demonstrate the whole
-    Property -> Datastream -> Dataset chain out of the box."""
+    """PR1's mock Web SDK extension carries three environment-specific
+    datastream ids — production and staging match entries in
+    datastream_map.sample.json (-> "Loyalty Events" / "Web SDK Events"),
+    development is deliberately left unmapped — mock mode should
+    demonstrate the whole Property -> Datastream -> Dataset chain, and the
+    unmapped case, out of the box."""
     dc_rows = data.fetch_dc()
     edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
-    by_property = {e["property"]: e for e in edges}
+    by_env = {e["environment"]: e for e in edges if e["property"] == "acme.com — Web"}
 
-    assert by_property["acme.com — Web"]["datastream"] == "Prod Web Datastream"
-    assert by_property["acme.com — Web"]["dataset"] == "Loyalty Events"
-    assert by_property["acme.com — Web"]["mapped"] is True
-    assert "Acme Mobile App" not in by_property  # no Web SDK extension configured at all
+    assert by_env["production"]["datastream"] == "Prod Web Datastream (production)"
+    assert by_env["production"]["dataset"] == "Loyalty Events"
+    assert by_env["production"]["mapped"] is True
+
+    assert by_env["staging"]["datastream"] == "Staging Web Datastream (staging)"
+    assert by_env["staging"]["dataset"] == "Web SDK Events"
+    assert by_env["staging"]["mapped"] is True
+
+    assert by_env["development"]["mapped"] is False
+    assert by_env["development"]["dataset"] == ""
+    assert "unmapped" in by_env["development"]["datastream"]
+
+    assert not any(e["property"] == "Acme Mobile App" for e in edges)  # no Web SDK extension configured at all
 
 
 def test_fetch_property_datastream_edges_flags_an_unmapped_datastream(monkeypatch):
