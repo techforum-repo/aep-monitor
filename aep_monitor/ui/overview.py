@@ -182,7 +182,10 @@ def _do_refresh_lineage() -> None:
 # One fixed color per pipeline stage, applied to every node at that stage —
 # not a cycled/generated palette — so a viewer learns "blue = dataset"
 # once and it holds across every Sankey render, not just this session.
-_LINEAGE_STAGE_COLORS = {"dataset": "#2a78d6", "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa"}
+# Teal for schema deliberately avoids the reserved status-red/green hues
+# (see ui/shared.py's _GOOD/_WARNING/_BAD_STATES) — this palette is a
+# stage identity, not a health signal, and must never be confused with one.
+_LINEAGE_STAGE_COLORS = {"schema": "#1fada6", "dataset": "#2a78d6", "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa"}
 
 
 def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
@@ -198,19 +201,27 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     scale of ~2 connections/~5 projects never exercised this): every
     unresolved dataset id was its own node, and a real org's permission gap
     can produce dozens of them — a wall of long, near-identical, mostly
-    illegible GUID labels stacked on the left. Every stage-4 fallback
-    below collapses to one shared "Unresolved dataset" node instead (the
-    specific raw ids are still listed in the caption under the chart, in
-    ui/overview.py's _render_lineage(), for anyone actually debugging a
-    resolution gap) — this is a visualization-layer decision only;
-    fetch_cja_dataset_lineage() itself is untouched and still returns the
-    specific id per row. Figure height is also no longer fixed — a real
-    org can need far more vertical space per node than the ~5-node mock
-    demo did to keep labels from overlapping."""
+    illegible GUID labels stacked on the left. Every unresolved-dataset
+    fallback below collapses to one shared "Unresolved dataset" node
+    instead (the specific raw ids are still listed in the caption under
+    the chart, in ui/overview.py's _render_lineage(), for anyone actually
+    debugging a resolution gap) — this is a visualization-layer decision
+    only; fetch_cja_dataset_lineage() itself is untouched and still
+    returns the specific id per row. Figure height is also no longer
+    fixed — a real org can need far more vertical space per node than the
+    ~5-node mock demo did to keep labels from overlapping.
+
+    Schema was added as the leftmost stage on top of all of the above —
+    same treatment: an unresolved *dataset* row has no schema to show
+    either (blank, not guessed), but a resolved dataset's own schema
+    always gets its own node, never folded into "Unresolved dataset"
+    (that collapsing is specifically for the CJA-side permission gap, not
+    schema resolution, which is a different, much less lossy fallback —
+    see fetch_cja_dataset_lineage()'s docstring)."""
     node_index: dict[tuple[str, str], int] = {}
     node_labels: list[str] = []
     node_colors: list[str] = []
-    nodes_per_stage: dict[str, set[str]] = {"dataset": set(), "connection": set(), "dataview": set(), "project": set()}
+    nodes_per_stage: dict[str, set[str]] = {"schema": set(), "dataset": set(), "connection": set(), "dataview": set(), "project": set()}
 
     def _node(stage: str, name: str) -> int | None:
         if not name:
@@ -227,7 +238,7 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     link_counts: dict[tuple[int, int], int] = {}
     for row in rows:
         stage_nodes = [
-            _node("dataset", row["dataset"]), _node("connection", row["connection"]),
+            _node("schema", row["schema"]), _node("dataset", row["dataset"]), _node("connection", row["connection"]),
             _node("dataview", row["dataview"]), _node("project", row["project"]),
         ]
         for a, b in zip(stage_nodes, stage_nodes[1:]):
@@ -263,8 +274,9 @@ def _render_lineage() -> None:
     st.divider()
     st.markdown("#### End-to-end data flow")
     st.caption(
-        "AEP Dataset → CJA Connection → CJA Data View → CJA Project, using confirmed API links: a connection's "
-        "own `dataSets` field, its data views' parent-connection binding, and a project's data-view binding. "
+        "XDM Schema → AEP Dataset → CJA Connection → CJA Data View → CJA Project, using confirmed API links: a "
+        "dataset's own schema binding, a connection's own `dataSets` field, its data views' parent-connection "
+        "binding, and a project's data-view binding. "
         "Data Collection properties are listed separately below, **not** connected into this flow — there's no "
         "public API for Datastream configuration (which property's Web SDK datastream sends to which dataset), "
         "so that link can't be discovered programmatically; only whoever configured it knows the mapping. "

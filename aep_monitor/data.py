@@ -229,25 +229,35 @@ def fetch_cja_projects() -> list[dict[str, Any]]:
 
 
 def fetch_cja_dataset_lineage(sandbox: str | None = None) -> list[dict[str, Any]]:
-    """One row per confirmed hop-by-hop path through the pipeline: AEP
-    Dataset -> CJA Connection (via the connection's own `dataset_ids`,
-    confirmed live via Adobe's docs -- see clients/cja.py's
+    """One row per confirmed hop-by-hop path through the pipeline: XDM
+    Schema -> AEP Dataset (via the dataset's own `schemaRef`, already used
+    on the Datasets page/Compare) -> CJA Connection (via the connection's
+    own `dataset_ids`, confirmed live via Adobe's docs — see clients/cja.py's
     parse_connection()) -> CJA Data View (via connection_id) -> CJA
     Project (via dataview_id). Each row is
-    {dataset, connection, dataview, project} with the *name* already
-    resolved (never a raw id) — a stage with nothing downstream yet (a
-    connection with no data views, a data view with no projects) still
-    gets a row with that stage's rest left blank, rather than being
+    {schema, dataset, connection, dataview, project} with the *name*
+    already resolved (never a raw id) — a stage with nothing downstream
+    yet (a connection with no data views, a data view with no projects)
+    still gets a row with that stage's rest left blank, rather than being
     dropped, so the Overview page's lineage view can show where the
     pipeline dead-ends, not just where it's fully wired end to end.
 
-    Datasets are sandbox-scoped (Catalog Service); Connections/Data Views/
-    Projects are org-wide (see fetch_sandbox_comparison()'s docstring) —
-    so a connection's dataset_ids can reference a dataset from a
-    *different* sandbox than the one passed in here, which this function
-    has no way to detect (there's no "which sandbox is this dataset id
-    in" lookup) and will just show as an unresolved id, same as any other
-    permission-based gap this app already surfaces that way.
+    Datasets and Schemas are sandbox-scoped (Catalog Service/Schema
+    Registry); Connections/Data Views/Projects are org-wide (see
+    fetch_sandbox_comparison()'s docstring) — so a connection's
+    dataset_ids can reference a dataset from a *different* sandbox than
+    the one passed in here, which this function has no way to detect
+    (there's no "which sandbox is this dataset id in" lookup) and will
+    just show as an unresolved id, same as any other permission-based gap
+    this app already surfaces that way. A dataset that IS resolved but
+    whose schema id doesn't resolve to a title falls back to the id's last
+    URL segment — same convention as the Datasets page's own schema
+    column, not the CJA permission-gap "(unresolved)" flag, since a
+    missing schema title here is far more likely a different container/
+    deleted schema than a permission problem. An unresolved *dataset*
+    (the id came from a connection but fetch_datasets() never returned it)
+    has no schema information at all to show, so that row's schema stage
+    is left blank rather than guessed.
 
     Deliberately excludes Data Collection properties/rules/data elements
     — there is no public API for Datastream configuration (which DC
@@ -255,7 +265,8 @@ def fetch_cja_dataset_lineage(sandbox: str | None = None) -> list[dict[str, Any]
     can't be discovered programmatically; the Overview page shows DC
     properties as a separate, explicitly-unconnected group instead of
     guessing at a link here."""
-    dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
+    schema_titles = fetch_schema_titles(sandbox=sandbox)
+    datasets_by_id = {d["dataset_id"]: d for d in fetch_datasets(sandbox=sandbox)}
     connections = fetch_cja_connections()
     dataviews = fetch_cja_dataviews()
     projects = fetch_cja_projects()
@@ -267,22 +278,32 @@ def fetch_cja_dataset_lineage(sandbox: str | None = None) -> list[dict[str, Any]
     for p in projects:
         projects_by_dv.setdefault(p["dataview_id"], []).append(p)
 
+    def _schema_label(schema_id: str) -> str:
+        if not schema_id:
+            return ""
+        return schema_titles.get(schema_id, schema_id.rsplit("/", 1)[-1])
+
     rows: list[dict[str, Any]] = []
     for conn in connections:
         dataset_ids = conn.get("dataset_ids") or [""]  # still show the connection even with no known dataset
         conn_dataviews = dataviews_by_conn.get(conn["connection_id"], [])
         for dataset_id in dataset_ids:
-            dataset_label = dataset_names.get(dataset_id, f"{dataset_id} (unresolved)" if dataset_id else "—")
+            dataset = datasets_by_id.get(dataset_id)
+            dataset_label = dataset["name"] if dataset else (f"{dataset_id} (unresolved)" if dataset_id else "—")
+            schema_label = _schema_label(dataset["schema_id"]) if dataset else ""
             if not conn_dataviews:
-                rows.append({"dataset": dataset_label, "connection": conn["name"], "dataview": "", "project": ""})
+                rows.append({"schema": schema_label, "dataset": dataset_label, "connection": conn["name"], "dataview": "", "project": ""})
                 continue
             for dv in conn_dataviews:
                 dv_projects = projects_by_dv.get(dv["dataview_id"], [])
                 if not dv_projects:
-                    rows.append({"dataset": dataset_label, "connection": conn["name"], "dataview": dv["name"], "project": ""})
+                    rows.append({"schema": schema_label, "dataset": dataset_label, "connection": conn["name"], "dataview": dv["name"], "project": ""})
                     continue
                 for p in dv_projects:
-                    rows.append({"dataset": dataset_label, "connection": conn["name"], "dataview": dv["name"], "project": p["name"]})
+                    rows.append({
+                        "schema": schema_label, "dataset": dataset_label, "connection": conn["name"],
+                        "dataview": dv["name"], "project": p["name"],
+                    })
     return rows
 
 

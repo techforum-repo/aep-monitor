@@ -225,16 +225,27 @@ def test_fetch_user_display_names_degrades_to_empty_on_a_fetch_failure_instead_o
 
 def test_fetch_cja_dataset_lineage_builds_the_full_confirmed_chain():
     """Loyalty Events/Web SDK Events -> Web + Mobile Unified -> both mock
-    data views -> their projects should each produce a full four-stage
-    row, using resolved names throughout (never a raw id)."""
+    data views -> their projects should each produce a full five-stage
+    row (schema included), using resolved names throughout (never a raw id)."""
     rows = data.fetch_cja_dataset_lineage(sandbox="prod")
     full_chains = [r for r in rows if r["dataset"] == "Loyalty Events" and r["project"] == "Executive Weekly Report"]
     assert len(full_chains) == 1
     row = full_chains[0]
     assert row == {
-        "dataset": "Loyalty Events", "connection": "Web + Mobile Unified",
+        "schema": "Loyalty Events", "dataset": "Loyalty Events", "connection": "Web + Mobile Unified",
         "dataview": "Executive Dashboard View", "project": "Executive Weekly Report",
     }
+
+
+def test_fetch_cja_dataset_lineage_resolves_a_shared_schema_across_two_datasets():
+    """CRM Customer Batch and Loyalty Events are bound to the *same* mock
+    schema (loyalty-events) — the whole reason Schema was added as its own
+    stage: seeing that two otherwise-unrelated datasets share governance
+    at the schema level, not just a coincidence of two identical labels."""
+    rows = data.fetch_cja_dataset_lineage(sandbox="prod")
+    by_dataset = {r["dataset"]: r["schema"] for r in rows}
+    assert by_dataset["Loyalty Events"] == "Loyalty Events"
+    assert by_dataset["CRM Customer Batch"] == "Loyalty Events"
 
 
 def test_fetch_cja_dataset_lineage_shows_a_dead_end_instead_of_dropping_it():
@@ -253,7 +264,8 @@ def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatc
     """A connection's dataset_ids can reference a dataset from a different
     sandbox than the one being viewed (Datasets are sandbox-scoped, CJA
     Connections are org-wide) — that must show up flagged as unresolved,
-    not silently as a bare id or dropped."""
+    not silently as a bare id or dropped. An unresolved dataset also has no
+    schema to show at all (blank, not guessed)."""
     web_mobile = dict(mock_module.MOCK_CONNECTIONS[0])
     web_mobile["dataSets"] = [{"dataSetId": "not-a-real-dataset-id", "domain": "catalog", "type": "event", "name": "Ghost Dataset"}]
     patched_connections = [web_mobile, mock_module.MOCK_CONNECTIONS[1]]
@@ -263,3 +275,4 @@ def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatc
     matching = [r for r in rows if r["connection"] == "Web + Mobile Unified"]
     assert matching  # sanity: the connection itself still resolved
     assert all(r["dataset"] == "not-a-real-dataset-id (unresolved)" for r in matching)
+    assert all(r["schema"] == "" for r in matching)
