@@ -245,7 +245,17 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     # old default so a small org still gets a reasonably sized chart.
     busiest_stage = max((len(names) for names in nodes_per_stage.values()), default=1)
     height = max(380, 24 * busiest_stage)
-    fig.update_layout(height=height, margin=dict(l=10, r=10, t=10, b=10), font_size=12)
+    fig.update_layout(
+        height=height, margin=dict(l=10, r=10, t=10, b=10),
+        # A system-UI font stack, not Plotly's default Arial-first one —
+        # every major platform already has one of these installed, so this
+        # renders correctly with no external font request (this app stays
+        # explorable offline in mock mode; a chart shouldn't be the one
+        # thing that needs the internet). Slightly larger than the
+        # previous fixed 12px now that height scales with node count
+        # instead of cramming everything into 380px regardless.
+        font=dict(family='-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', size=13),
+    )
     return fig
 
 
