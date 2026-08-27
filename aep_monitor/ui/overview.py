@@ -46,6 +46,18 @@ def _do_refresh() -> None:
     st.session_state.quota_rows = results["quota"]
     st.session_state.segment_job_rows = results["segments"]
     st.session_state.query_rows = results["query_service"]
+    # Reported live as a real bug: the lineage chart and
+    # property_datastream_edges were previously only ever recomputed on a
+    # *sandbox change* (see _render_lineage()'s own trigger condition) —
+    # clicking "Refresh everything" silently left both stale. That's
+    # exactly the wrong behavior for datastream_map.json specifically: a
+    # human edits that file directly (no API call, no cache-busting signal
+    # of its own) and would reasonably expect the button literally named
+    # "Refresh everything" to pick up the change. Called after dc_rows
+    # above so fetch_property_datastream_edges() (inside
+    # _do_refresh_lineage()) sees this refresh's properties, not last
+    # cycle's.
+    _do_refresh_lineage()
 
 
 def render() -> None:

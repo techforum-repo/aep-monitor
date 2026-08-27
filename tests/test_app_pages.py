@@ -143,6 +143,40 @@ def test_overview_lineage_renders_without_exception_when_focused_on_a_connection
     assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"] == "Prod Web Datastream"
 
 
+def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch):
+    """Regression, reported live: "Refresh everything" never actually
+    recomputed the lineage chart or property_datastream_edges at all —
+    both were only ever refreshed on a *sandbox change* (see
+    _render_lineage()'s own trigger condition), so editing
+    datastream_map.json (a plain local file with no cache-busting signal
+    of its own) and clicking the button literally named "Refresh
+    everything" silently did nothing. Simulates exactly that sequence:
+    load once with nothing mapped, "edit the file" (patch the loader), then
+    click Refresh — the mapping must show up without touching the sandbox."""
+    # data.py does `from .datastream_map import load_datastream_map` — a
+    # direct name binding into data.py's own namespace, decoupled from
+    # aep_monitor.datastream_map's own attribute. Must patch it there.
+    from aep_monitor import data as data_module
+    monkeypatch.setattr(data_module, "load_datastream_map", lambda: {})
+
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
+    # PR1's extension still carries a real datastream id (extracted from
+    # Reactor's settings regardless of the map) — just unmapped, not absent.
+    assert "unmapped" in dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
+
+    monkeypatch.setattr(
+        data_module, "load_datastream_map",
+        lambda: {"00000000-0000-0000-0000-000000000000": {"name": "Prod Web Datastream", "dataset_id": "5f1a2b3c4d5e6f7a8b9c0d1e"}},
+    )
+    at.button(key="overview_refresh").click().run()
+
+    assert at.exception == []
+    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
+    assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"] == "Prod Web Datastream"
+
+
 def test_sdr_page_loads_dataview_components_and_schema_fields_on_selection():
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()
