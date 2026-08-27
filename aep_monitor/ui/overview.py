@@ -281,7 +281,12 @@ def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
     busiest_stage = max((len(names) for names in nodes_per_stage.values()), default=1)
     height = max(380, 24 * busiest_stage)
     fig.update_layout(
-        height=height, margin=dict(l=10, r=10, t=10, b=10),
+        # Extra top/bottom margin, not the original 10px — verified by
+        # actually rendering this at real-org scale (headless Chrome): the
+        # first and last node labels in the busiest stage sit flush against
+        # the plot edge with no margin, close enough to get visually clipped
+        # depending on the browser/zoom level.
+        height=height, margin=dict(l=10, r=10, t=20, b=20),
         # A system-UI font stack, not Plotly's default Arial-first one —
         # every major platform already has one of these installed, so this
         # renders correctly with no external font request (this app stays
