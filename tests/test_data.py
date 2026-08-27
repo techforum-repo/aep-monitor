@@ -293,6 +293,7 @@ def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
     assert by_env["production"]["dataset"] == "Loyalty Events"
     assert by_env["production"]["mapped"] is True
     assert by_env["production"]["mapped_dataset_id"] == "5f1a2b3c4d5e6f7a8b9c0d1e"  # raw id, for debug comparison
+    assert by_env["production"]["domains"] == ["www.acmecorp.com", "shop.acmecorp.com"]  # PR1's mock domains, passed through
 
     assert by_env["staging"]["datastream"] == "Staging Web Datastream (staging)"
     assert by_env["staging"]["dataset"] == "Web SDK Events"
@@ -303,7 +304,18 @@ def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
     assert by_env["development"]["mapped_dataset_id"] == ""  # nothing to compare — never mapped at all
     assert "unmapped" in by_env["development"]["datastream"]
 
-    assert not any(e["property"] == "Acme Mobile App" for e in edges)  # no Web SDK extension configured at all
+    # PR2 (mobile) carries its own single-environment datastream too,
+    # matching datastream_map.sample.json's third entry — exercising the
+    # "no website domain" case all the way through the chain, since a
+    # mobile property has none.
+    mobile_edges = [e for e in edges if e["property"] == "Acme Mobile App"]
+    assert len(mobile_edges) == 1
+    assert mobile_edges[0]["domains"] == []
+    # "Mobile App Events" is deliberately not part of any CJA connection —
+    # see MOCK_DATASETS' comment — demonstrating that this mapping still
+    # resolves even though no connection will ever surface it.
+    assert mobile_edges[0]["dataset"] == "Mobile App Events"
+    assert mobile_edges[0]["mapped"] is True
 
 
 def test_fetch_property_datastream_edges_flags_an_unmapped_datastream(monkeypatch):
@@ -323,13 +335,22 @@ def test_fetch_property_datastream_edges_flags_an_unmapped_datastream(monkeypatc
 
     edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
 
-    assert len(edges) == 1
-    assert edges[0]["mapped"] is False
-    assert edges[0]["dataset"] == ""
-    assert "unmapped" in edges[0]["datastream"]
+    # Scoped to PR1 — PR2 (mobile) contributes its own, separately-mapped
+    # edge regardless (see test_fetch_property_datastream_edges_resolves_
+    # the_full_mock_chain), not relevant to this property's own unmapped
+    # case.
+    pr1_edges = [e for e in edges if e["property"] == "acme.com — Web"]
+    assert len(pr1_edges) == 1
+    assert pr1_edges[0]["mapped"] is False
+    assert pr1_edges[0]["dataset"] == ""
+    assert "unmapped" in pr1_edges[0]["datastream"]
 
 
-def test_fetch_property_datastream_edges_returns_nothing_for_a_property_with_no_datastream():
+def test_fetch_property_datastream_edges_returns_nothing_for_a_property_with_no_extensions_at_all(monkeypatch):
+    """A property with zero extensions (as opposed to PR2, which has one
+    that itself carries a datastream — see the full-chain test above)
+    contributes no row, not an error."""
+    monkeypatch.setattr(mock_module, "MOCK_EXTENSIONS", {**mock_module.MOCK_EXTENSIONS, "PR2": []})
     dc_rows = data.fetch_dc()
     edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
     assert not any(e["property"] == "Acme Mobile App" for e in edges)

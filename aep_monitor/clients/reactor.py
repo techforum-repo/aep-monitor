@@ -91,9 +91,17 @@ _GOOD_LIBRARY_STATES = {"published", "approved"}
 
 def parse_property(item: dict[str, Any]) -> dict[str, Any]:
     attrs = safe_dict(item.get("attributes"))
+    # `domains` is a top-level array of strings on the same property
+    # attributes this function already reads (confirmed via Adobe's own
+    # Properties endpoint docs: required for web properties, "an array of
+    # URL domains for the property") — no extra call or extra permission
+    # needed beyond the property GET this app already makes.
+    domains_raw = attrs.get("domains")
+    domains = [str(d) for d in domains_raw if d] if isinstance(domains_raw, list) else []
     return {
         "property_id": str(item.get("id") or ""),
         "property_name": str(attrs.get("name") or item.get("id") or "(unnamed)"),
+        "domains": domains,
         "raw": item,
     }
 

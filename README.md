@@ -16,7 +16,7 @@ provisioning to cross-product monitoring.
 
 | Page | API | Signal |
 |---|---|---|
-| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow (Property → Datastream → XDM Schema → AEP Dataset → CJA Connection → Data View → Project, one connection at a time) — the Property/Datastream hops closed via Reactor plus a small git-ignored mapping file, since no public Adobe API exposes that link |
+| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow — one Graphviz flowchart, one connection at a time, covering Website domain → Property → Datastream → XDM Schema → AEP Dataset → CJA Connection → Data View → Project — the Website/Property/Datastream hops closed via Reactor plus a small git-ignored mapping file, since no public Adobe API exposes that link |
 | **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend — plus a **Connector** column resolving each flow's `flowSpec` to a display name, since `/flows` returns inbound ingestion and outbound activation flows undifferentiated (see Known Limitations) |
 | **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
 | **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
@@ -642,20 +642,59 @@ once per alert, not on every subsequent poll while it's still open.
   Administrator. The CJA and SDR pages show this same explanation in-app
   when Connections comes back empty.
 - **Overview's end-to-end data flow** (`fetch_cja_dataset_lineage()` and
-  `fetch_property_datastream_edges()` in `data.py`, `_build_lineage_sankey()`
-  in `ui/overview.py`) charts **(Data Collection) Property → Datastream →
-  XDM Schema → AEP Dataset → CJA Connection → CJA Data View → CJA Project**.
+  `fetch_property_datastream_edges()` in `data.py`, `_build_lineage_flowchart()`
+  and `_relevant_property_edges()` in `ui/overview.py`) is one Graphviz
+  flowchart (boxes + arrows, via `st.graphviz_chart` — no new dependency,
+  it renders a raw DOT string directly) covering the whole chain: **Website
+  domain → (Data Collection) Property → Datastream → XDM Schema → AEP
+  Dataset → CJA Connection → CJA Data View → CJA Project**.
 
-  The right five hops are genuinely confirmed cross-product links: a
+  This went through two earlier shapes before landing here, both directly
+  from live feedback:
+  1. One seven-stage chart (no Website domain yet) — a Plotly **Sankey**,
+     which turned up a genuine, reproducible rendering defect ("the mock
+     not looks good"), confirmed by re-rendering the exact returned figure
+     standalone: scoped to one connection, most stages boil down to
+     exactly one path, and Plotly draws a link with nothing to compare its
+     flow against as a solid, unlabeled grey block spanning the full node
+     height. A Sankey's proportional-flow-width encoding was never
+     actually the point here — nothing in this pipeline is a volume
+     metric, every link is just "N paths go through here" — so it was
+     replaced with a plain **Graphviz flowchart**, which never had that
+     failure mode to begin with since it isn't trying to encode width at
+     all; a path count still shows, as a small "×N" edge label, only when
+     it's more than one. Graphviz also sidesteps every Sankey-specific
+     sizing/height-tuning problem this app had previously fought (fixed
+     height crushing a busy stage, margin clipping at the plot edge): its
+     own automatic layered layout sizes itself to content, including a
+     same-rank "anchor" per stage (`_build_lineage_flowchart()`'s
+     docstring) so stage order stays left-to-right even when a stage has
+     no real edge into the next one (e.g. a connection with no data view
+     at all).
+  2. Website domain/Property/Datastream were then split *out* of that
+     five-stage flowchart entirely, into their own separate,
+     collapsed-by-default table — a real usability problem on the Sankey
+     from step 1, where those stages almost always collapsed to a single
+     node each, rendering as a huge, mostly-empty solid block next to the
+     genuinely dense fan-out further along. That specific failure mode
+     doesn't exist on a Graphviz flowchart (a 1-node stage is just a small
+     box, not a rendering problem), so on request ("include this also to
+     the diagram and remove the separate section") they were merged back
+     in here, joined onto the CJA-side chain's own Dataset node by dataset
+     *name* (see `_build_lineage_flowchart()`'s docstring) — one diagram
+     again, this time without reintroducing what made the first one look
+     bad.
+
+  The five CJA-side hops are genuinely confirmed cross-product links: a
   dataset's own schema binding (already used on the Datasets page/Compare),
   and a CJA connection's own `dataSets` field (`expansion=dataSets`,
   confirmed via Adobe's docs — `{dataSetId, domain, type, timestampId,
   visitorId, identityNamespace, usePrimaryIdNamespace, identityMap, name,
   streaming}` per entry).
 
-  The left two hops close a real gap Adobe doesn't expose via any
-  documented API — but not by guessing at it. There is no official,
-  documented API for Datastream *configuration* (which datastream a
+  The Website/Property/Datastream chain closes a real gap Adobe doesn't
+  expose via any documented API — but not by guessing at it. There is no
+  official, documented API for Datastream *configuration* (which datastream a
   property's Web SDK extension is set to use, and which dataset that
   datastream forwards to). Confirmed, not just assumed: Adobe's own
   community forum has staff confirming an internal API exists at
@@ -666,7 +705,17 @@ once per alert, not on every subsequent poll while it's still open.
   different risk category from every other integration in this app (all
   built against Adobe's actual published docs), so it's not used.
 
-  Instead, the *first* hop (property → datastream id) is fully automated
+  The *very first* hop (website → property) needs no workaround at all:
+  Adobe's own Properties endpoint already returns a `domains` attribute —
+  a plain array of the web domain(s) a property is configured for
+  (confirmed via Adobe's own docs: required for web properties) — on the
+  same `GET /properties` response this app already fetches for every
+  other property field. No extra call, no extra scope, just one more field
+  read off a response already in hand (`parse_property()` in
+  `clients/reactor.py`). A non-web property (the mock mobile property, for
+  instance) simply carries none, which is expected, not an error.
+
+  Instead, the *next* hop (property → datastream id) is fully automated
   through an API this app already uses: a property's Web SDK extension
   carries its own configured datastream id(s) in Reactor's own, fully
   public `GET /properties/{id}/extensions` response — confirmed via
@@ -711,7 +760,7 @@ once per alert, not on every subsequent poll while it's still open.
   extraction against what a live tenant's `settings` actually contains
   before assuming `datastream_map.json` itself is wrong.
 
-  The *second* hop (datastream id → its name and destination dataset) is
+  The *last* hop (datastream id → its name and destination dataset) is
   the one piece no public API exposes at all, so it's closed with one
   small, git-ignored, human-maintained file instead: `datastream_map.json`
   (`aep_monitor/datastream_map.py`), `{datastream_id: {name, dataset_id}}`
@@ -721,16 +770,15 @@ once per alert, not on every subsequent poll while it's still open.
   one deliberate manual step in an otherwise fully-automated chain — a
   human who configured Datastreams already knows this mapping; nothing
   public exposes it for this app to discover on its own. A datastream id
-  with no entry in the file still gets a node (flagged "(unmapped,
-  {environment})"), never silently dropped, and a caption under the chart
-  lists exactly which ones need adding. Editing this file and clicking
+  with no entry in the file still gets a row (Dataset shown as "(not
+  mapped)"), never silently dropped. Editing this file and clicking
   **"Refresh everything"** on the Overview page picks it up immediately —
   an earlier version of this app only ever recomputed the lineage chart on
   a *sandbox change*, silently ignoring a plain file edit; the refresh
   button now re-reads it too.
 
-  The chart is always scoped to one connection at a time via a **"Focus on
-  connection"** picker — an unfiltered, all-connections view was tried
+  The flowchart is always scoped to one connection at a time via a **"Focus
+  on connection"** picker — an unfiltered, all-connections view was tried
   first, but at real-org scale (dozens of connections/projects) it's
   reliably too dense to read no matter how much the rendering is tuned, so
   the option was removed rather than merely defaulted away from. That
@@ -743,22 +791,24 @@ once per alert, not on every subsequent poll while it's still open.
   resolved data in this sandbox too" checkbox as an explicit opt-out so a
   connection is never silently unreachable, only filtered by default.
 
-  Property/Datastream edges, by contrast, are **not** scoped to the
-  focused connection — every one is always shown, regardless of which
-  connection is picked. An earlier version filtered them to only the
-  focused connection's own datasets, which turned out to be a real bug
-  reported live: a property's datastream very plausibly forwards to a
-  dataset that isn't part of *any* CJA connection at all (e.g. a raw
-  data-lake landing dataset), so that filter could silently hide a
-  correctly-configured mapping no matter which connection was selected.
-  The shared dataset-name node merge in `_build_lineage_sankey()` is what
-  connects a Property → Datastream → Dataset edge into the CJA-side chain
-  *when* they happen to share a dataset; when they don't, it still renders
-  as its own segment with nothing further downstream — the same honest
-  dead-end treatment every other unconnected stage in this chart already
-  gets, rather than disappearing. The Data Collection properties table
-  underneath the chart shows every property's resolved datastream too,
-  independent of the chart entirely.
+  The Website domain/Property/Datastream portion of the *same* flowchart
+  is independently scoped too, via `_relevant_property_edges()` —
+  filtered to just the edges whose dataset the focused connection actually
+  resolves, directly implementing the "only show the datastream that maps
+  to the corresponding sandbox" request. An earlier version of this app
+  filtered this way *unconditionally* and had to walk it back once: a
+  property's datastream very plausibly forwards to a dataset that isn't
+  part of *any* CJA connection at all (e.g. a raw data-lake landing
+  dataset), so if this were the *only* view of that mapping, filtering it
+  by connection could silently hide a correctly-configured one no matter
+  which connection was selected. The fix that stuck is keeping a second,
+  always-unfiltered "Debug: every Property → Datastream → Dataset value
+  extracted/matched" expander right below the chart as an escape hatch —
+  the diagram shows "what feeds *this* connection", the debug table always
+  has the full, never-hidden "did this extract/map at all" list regardless
+  of scope. The Data Collection properties table further down the page
+  shows every property's resolved datastream (and its website domains)
+  too, independent of both and of whichever connection is focused.
 
   A dataset id a connection references but the active sandbox's own
   dataset list can't resolve (a real possibility — Datasets are
@@ -767,11 +817,12 @@ once per alert, not on every subsequent poll while it's still open.
   "Unresolved dataset" node rather than one node per raw id — reported
   live that a real org's permission/sandbox gaps can produce dozens of
   them, and a wall of long, near-identical GUID labels was unreadable; the
-  specific raw ids are still listed in a caption under the chart. Chart
-  height scales with whichever stage has the most distinct nodes (not a
-  fixed size) for the same reason, and a color-coded legend plus
-  stage-prefixed hover text on every node ("Schema: X") make the seven
-  stage colors identifiable without memorizing them.
+  specific raw ids are still listed in a caption under the chart. Graphviz's
+  own layered layout sizes the chart to content automatically (no manual
+  height/margin tuning needed, unlike the Sankey this replaced), and a
+  color-coded legend plus a stage-prefixed tooltip on every node
+  ("Schema: X") make all eight stage colors identifiable without
+  memorizing them.
 - **SDR page** (`aep_monitor/clients/cja.py`'s dimensions/metrics
   endpoints, `aep_monitor/clients/schema_registry.py`) is the newest,
   least-exercised integration in this app — same caveat as Audit Query.

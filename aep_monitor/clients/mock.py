@@ -93,7 +93,11 @@ MOCK_RUNS: dict[str, list[dict[str, Any]]] = {
 MOCK_COMPANIES: list[dict[str, Any]] = [{"id": "CO12345", "attributes": {"name": "Acme Corp"}}]
 
 MOCK_PROPERTIES: list[dict[str, Any]] = [
-    {"id": "PR1", "attributes": {"name": "acme.com — Web"}},
+    # "domains" only shows up on real web properties (Adobe's own docs mark
+    # it required for platform: web) — PR2 (mobile) deliberately has none,
+    # to also demonstrate that a property can have zero domains without it
+    # being an error.
+    {"id": "PR1", "attributes": {"name": "acme.com — Web", "domains": ["www.acmecorp.com", "shop.acmecorp.com"]}},
     {"id": "PR2", "attributes": {"name": "Acme Mobile App"}},
 ]
 
@@ -128,7 +132,29 @@ MOCK_EXTENSIONS: dict[str, list[dict[str, Any]]] = {
         {"id": "EX3", "attributes": {"name": "Custom Consent Extension", "published": False, "review_status": "rejected"}},
     ],
     "PR2": [
-        {"id": "EX4", "attributes": {"name": "Adobe Experience Platform Mobile SDK", "published": True, "review_status": "approved"}},
+        # Extraction is generic across every extension's `settings`, not
+        # special-cased to "adobe-alloy" (see _extract_datastream_ids()),
+        # so the Mobile SDK extension carries a datastream id the same way
+        # — single "production" instance only here (no
+        # staging/development id, unlike PR1), to also demonstrate that a
+        # property need not configure all three. Matches
+        # datastream_map.sample.json's third entry (-> "Mobile App
+        # Events" — a dataset deliberately *not* part of any CJA
+        # connection, see MOCK_DATASETS), which otherwise had no
+        # property/extension actually extracting it — the mobile property
+        # also has no `domains` of its own (not a web property), so it's
+        # the case where "Website domain(s)" legitimately shows "—" all
+        # the way through the chain.
+        {
+            "id": "EX4",
+            "attributes": {
+                "name": "Adobe Experience Platform Mobile SDK", "published": True, "review_status": "approved",
+                "settings": (
+                    "{\"instances\":[{\"name\":\"alloy\",\"sandbox\":\"prod\","
+                    "\"edgeConfigId\":\"22222222-2222-2222-2222-222222222222\"}]}"
+                ),
+            },
+        },
     ],
 }
 
@@ -345,6 +371,7 @@ MOCK_CJA_AUDIT_LOGS: list[dict[str, Any]] = [
 MOCK_SCHEMAS: list[dict[str, Any]] = [
     {"$id": "https://ns.adobe.com/acmecorp/schemas/loyalty-events", "title": "Loyalty Events"},
     {"$id": "https://ns.adobe.com/acmecorp/schemas/web-events", "title": "Web SDK Events"},
+    {"$id": "https://ns.adobe.com/acmecorp/schemas/mobile-events", "title": "Mobile App Events"},
 ]
 
 MOCK_SCHEMA_DETAIL: dict[str, dict[str, Any]] = {
@@ -456,6 +483,20 @@ MOCK_DATASETS: dict[str, dict[str, Any]] = {
         "schemaRef": {"id": "https://ns.adobe.com/acmecorp/schemas/loyalty-events", "contentType": "application/vnd.adobe.xed+json"},
         "tags": {"unifiedProfile": ["enabled:false"], "unifiedIdentity": ["enabled:false"]},
         "created": _iso(60 * 24 * 60), "updated": _iso(60 * 24 * 3),
+    },
+    # Deliberately *not* referenced by any MOCK_CONNECTIONS entry — the
+    # exact case the README calls out as the reason Property/Datastream
+    # edges are never filtered to the focused connection's own datasets: a
+    # property's datastream very plausibly forwards to a dataset that
+    # isn't part of any CJA connection at all (e.g. a raw landing dataset
+    # ahead of whatever pipeline eventually feeds CJA). Fed by PR2's
+    # (mobile) datastream via datastream_map.sample.json's third entry —
+    # without this, that entry had nothing real extracting it.
+    "8c4d5e6f7a8b9c0d1e2f3a4b": {
+        "name": "Mobile App Events", "description": "Raw mobile app events landing (not yet part of any CJA connection)",
+        "schemaRef": {"id": "https://ns.adobe.com/acmecorp/schemas/mobile-events", "contentType": "application/vnd.adobe.xed+json"},
+        "tags": {"unifiedProfile": ["enabled:true"], "unifiedIdentity": ["enabled:true"]},
+        "created": _iso(60 * 24 * 15), "updated": _iso(30),
     },
 }
 

@@ -309,8 +309,8 @@ def fetch_cja_dataset_lineage(sandbox: str | None = None) -> list[dict[str, Any]
 
 
 def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str | None = None) -> list[dict[str, Any]]:
-    """{property, environment, datastream_id, datastream, dataset, mapped}
-    rows — the one remaining hop Overview's lineage chart can close
+    """{property, domains, environment, datastream_id, datastream, dataset,
+    mapped} rows — the one remaining hop Overview's lineage chart can close
     without guessing at Adobe's undocumented Datastreams/EdgeConfig API
     (see README Known Limitations): a property's Web SDK extension already
     carries its own configured datastream id(s) in Reactor's own, fully
@@ -340,7 +340,14 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
     with no entry in datastream_map.json still gets a row (`mapped=False`,
     `dataset=""`) rather than being silently dropped, so "this property's
     datastream isn't mapped yet" stays visible instead of just
-    disappearing."""
+    disappearing.
+
+    `domains` is the property's own `domains` attribute (confirmed via
+    Adobe's Properties endpoint docs — an array of the web domains that
+    load this property's library), passed through unchanged from
+    parse_property() with no extra call or permission needed. A
+    non-web-platform property (or one just missing the field) carries an
+    empty list, not an error."""
     datastream_map = load_datastream_map()
     dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
 
@@ -364,7 +371,8 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
                 datastream_label = f"{datastream_id} (unmapped, {environment})"
                 dataset_label = ""
             rows.append({
-                "property": prop["property_name"], "environment": environment, "datastream_id": datastream_id,
+                "property": prop["property_name"], "domains": list(prop.get("domains") or []),
+                "environment": environment, "datastream_id": datastream_id,
                 "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
                 # Raw, unformatted values kept alongside the display labels
                 # above specifically for debugging a mapping that isn't

@@ -48,11 +48,13 @@ def test_page_renders_without_exception(page):
 
 
 def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
-    """Overview's "End-to-end data flow" section — a Sankey of Property ->
-    Datastream -> Schema -> Dataset -> Connection -> Data View -> Project,
-    the first two hops closed via Reactor + the git-ignored
-    datastream_map.json (falling back to the committed sample in mock
-    mode) rather than Adobe's undocumented Datastreams API."""
+    """Overview's "End-to-end data flow" section — a Graphviz flowchart of
+    Schema -> Dataset -> Connection -> Data View -> Project (the five
+    confirmed-API hops), plus Property -> Datastream -> Dataset kept out of
+    that chart and shown as a separate collapsed table instead, closed via
+    Reactor + the git-ignored datastream_map.json (falling back to the
+    committed sample in mock mode) rather than Adobe's undocumented
+    Datastreams API."""
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()
     assert at.exception == []
@@ -68,11 +70,16 @@ def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
     # demonstrate the full chain, and the unmapped case, out of the box.
     pr1_datastream = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
     assert "Prod Web Datastream (production)" in pr1_datastream
+    # PR1 (a web property) carries its mock domains; PR2 (mobile) has none.
+    assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Website domain(s)"] == "www.acmecorp.com, shop.acmecorp.com"
+    assert dc_table[dc_table["Property"] == "Acme Mobile App"].iloc[0]["Website domain(s)"] == "—"
     assert "Staging Web Datastream (staging)" in pr1_datastream
     assert "unmapped, development" in pr1_datastream
-    # PR2 has no Web SDK extension configured at all in mock data.
+    # PR2's Mobile SDK extension carries its own single-environment
+    # datastream too (production only — no staging/development id),
+    # matching datastream_map.sample.json's third entry.
     pr2_row = dc_table[dc_table["Property"] == "Acme Mobile App"].iloc[0]
-    assert pr2_row["Datastream"] == "—"
+    assert pr2_row["Datastream"] == "Mobile App Datastream (production)"
 
     # The debug table — added specifically so a mapping that isn't showing
     # up as expected can be checked directly against real extracted/matched
@@ -136,23 +143,28 @@ def test_overview_lineage_filters_connections_by_sandbox_relevance_with_an_opt_o
 
 
 def test_overview_lineage_renders_without_exception_when_focused_on_a_connection_unrelated_to_any_mapped_datastream():
-    """Regression: an earlier version filtered Property/Datastream edges to
-    only the focused connection's own datasets — reported live as a real
-    bug, since a property's datastream can forward to a dataset that isn't
-    part of *any* CJA connection at all. PR1's mock datastream maps to
-    "Loyalty Events", which "CRM Connection" doesn't use (it uses "CRM
-    Customer Batch" instead) — picking CRM Connection must not error, and
-    the property/datastream mapping must still be visible somewhere (the
-    DC properties table is the inspectable part; Streamlit's AppTest can't
-    introspect a plotly_chart's actual figure data, confirmed directly —
-    it comes back as an UnknownElement with no readable .value)."""
+    """PR1's mock datastream maps to "Loyalty Events", which "CRM
+    Connection" doesn't use (it uses "CRM Customer Batch" instead) —
+    picking CRM Connection must not error. The chart itself now folds in
+    only the property/datastream(s) relevant to the focused connection
+    (see _relevant_property_edges()) so nothing from PR1 appears in it
+    here — but the mapping must still be visible somewhere: the unfiltered
+    debug table, and the DC properties table which is never scoped by
+    focus (the flowchart itself can't be inspected here — Streamlit's
+    AppTest can't read a graphviz_chart's actual content any more than it
+    could a plotly_chart's, confirmed directly: it comes back as an
+    UnknownElement with no readable .value)."""
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()
     at.selectbox(key="overview_lineage_focus").set_value("CRM Connection").run()
 
     assert at.exception == []
-    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
+    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
     assert "Prod Web Datastream (production)" in dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
+
+    debug_table = next(df.value for df in at.get("dataframe") if "Datastream ID (extracted)" in df.value.columns)
+    assert "Prod Web Datastream (production)" in debug_table[debug_table["Property"] == "acme.com — Web"]["Datastream"].tolist()[0]
+    assert debug_table[debug_table["Property"] == "acme.com — Web"]["Website domain(s)"].iloc[0] == "www.acmecorp.com, shop.acmecorp.com"
 
 
 def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch):
@@ -173,7 +185,7 @@ def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch)
 
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()
-    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
+    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
     # PR1's extension still carries a real datastream id (extracted from
     # Reactor's settings regardless of the map) — just unmapped, not absent.
     assert "unmapped" in dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
@@ -185,7 +197,7 @@ def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch)
     at.button(key="overview_refresh").click().run()
 
     assert at.exception == []
-    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Datastream" in df.value.columns)
+    dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
     # Production now resolves; staging/development are still unmapped in
     # this patched map (only the production id was added to it above).
     pr1_datastream = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
@@ -465,7 +477,7 @@ def test_datasets_page_shows_profile_and_identity_columns():
     assert len(tables) == 1
     assert "Profile-enabled" in tables[0].columns
     assert "Identity-enabled" in tables[0].columns
-    assert len(tables[0]) == 3  # 3 datasets in mock data
+    assert len(tables[0]) == 4  # 4 datasets in mock data (the 4th, Mobile App Events, isn't part of any CJA connection)
 
 
 def test_datasets_page_shows_schema_titles_not_raw_ids():

@@ -162,6 +162,22 @@ def test_parse_library_flags_failed_and_rejected_states_as_bad():
     assert published["is_good"] is True
 
 
+def test_parse_property_extracts_domains():
+    """`domains` is a top-level array of strings on the same property
+    attributes Adobe's Properties endpoint already returns (confirmed via
+    docs: required for web properties) — no extra call needed."""
+    web = reactor.parse_property({"id": "p1", "attributes": {"name": "acme.com — Web", "domains": ["www.acme.com", "shop.acme.com"]}})
+    assert web["domains"] == ["www.acme.com", "shop.acme.com"]
+
+    # A mobile (or otherwise non-web) property just has none — not an error.
+    mobile = reactor.parse_property({"id": "p2", "attributes": {"name": "Acme Mobile App"}})
+    assert mobile["domains"] == []
+
+    # Defensive against a malformed value (not a list) rather than crashing.
+    malformed = reactor.parse_property({"id": "p3", "attributes": {"domains": "not-a-list"}})
+    assert malformed["domains"] == []
+
+
 def test_reactor_parsers_do_not_crash_when_attributes_is_missing_or_not_an_object():
     assert reactor.parse_property({"id": "p1"})["property_name"] == "p1"
     assert reactor.parse_extension({"id": "e1", "attributes": None})["has_issue"] is False
