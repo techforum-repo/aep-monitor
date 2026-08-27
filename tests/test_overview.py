@@ -77,7 +77,20 @@ def test_flowchart_collapses_repeated_edges_into_one_labeled_edge():
     # The two rows diverge at Project — two separate, unlabeled (count-1) edges out of the Data View node.
     weekly, deep_dive = _node_id(dot, "Weekly Report"), _node_id(dot, "Deep Dive")
     assert _edge_label(dot, dv, weekly) is None
-    assert _edge_label(dot, dv, deep_dive) is None
+
+
+def test_show_path_counts_false_keeps_one_edge_but_drops_the_label():
+    """The same two-rows-one-hop setup as above, but with show_path_counts=False:
+    still exactly one collapsed edge (not two, not the row count) — this flag hides
+    the "×N" label, it doesn't change which edges get drawn."""
+    rows = [
+        _row(schema="Loyalty Schema", dataset="Loyalty Events", connection="Web + Mobile Unified", dataview="Executive Dashboard View", project="Weekly Report"),
+        _row(schema="Loyalty Schema", dataset="Loyalty Events", connection="Web + Mobile Unified", dataview="Executive Dashboard View", project="Deep Dive"),
+    ]
+    dot = _build_lineage_flowchart(rows, show_path_counts=False)
+    schema, dataset = (_node_id(dot, n) for n in ["Loyalty Schema", "Loyalty Events"])
+    assert dot.count(f"{schema} -> {dataset}") == 1  # still one arrow, not one per row
+    assert _edge_label(dot, schema, dataset) is None  # count is still 2 under the hood; just not shown
 
 
 def test_flowchart_skips_edges_past_a_blank_stage():

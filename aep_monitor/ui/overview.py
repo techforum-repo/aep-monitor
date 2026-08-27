@@ -293,7 +293,7 @@ def _dot_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _build_lineage_flowchart(rows: list[dict], property_edges: list[dict] | None = None) -> str:
+def _build_lineage_flowchart(rows: list[dict], property_edges: list[dict] | None = None, show_path_counts: bool = True) -> str:
     """Turns fetch_cja_dataset_lineage()'s flat per-path `rows` (Schema ->
     Dataset -> Connection -> Data View -> Project — the five confirmed-API
     hops) plus fetch_property_datastream_edges()'s flat `property_edges`
@@ -329,14 +329,18 @@ def _build_lineage_flowchart(rows: list[dict], property_edges: list[dict] | None
     two small boxes feeding one, not one node with two names crammed in.
 
     A link's path count shows as a small "×N" edge label only when it's
-    more than one — nothing here is a volume metric, every edge is just
-    "N paths go through here", so a Sankey's proportional link-width
-    encoding was never actually the point; this says the same thing more
-    plainly and, unlike a Sankey, never degrades at low N (a link with
-    nothing to compare its flow against used to render as an unlabeled
-    solid grey block spanning the full node height — confirmed live and by
+    more than one and show_path_counts is True (the default) — nothing
+    here is a volume metric, every edge is just "N paths go through
+    here", so a Sankey's proportional link-width encoding was never
+    actually the point; this says the same thing more plainly and,
+    unlike a Sankey, never degrades at low N (a link with nothing to
+    compare its flow against used to render as an unlabeled solid grey
+    block spanning the full node height — confirmed live and by
     re-rendering the exact figure standalone as a real, deterministic
-    rendering defect, not a screenshot glitch).
+    rendering defect, not a screenshot glitch). show_path_counts=False
+    keeps the same collapsed-edge structure (still one arrow, not N) and
+    drops just the label — for a viewer the fan-in count reads as noise
+    for, not a rendering fallback.
 
     A node is keyed by (stage, name) — not name alone — so a coincidental
     name collision across stages (e.g. a project happening to share a name
@@ -405,7 +409,7 @@ def _build_lineage_flowchart(rows: list[dict], property_edges: list[dict] | None
             _link(_node("domain", domain), property_node)
 
     edge_lines = [
-        f'{a} -> {b} [label="×{count}"];' if count > 1 else f"{a} -> {b};"
+        f'{a} -> {b} [label="×{count}"];' if (count > 1 and show_path_counts) else f"{a} -> {b};"
         for (a, b), count in edge_counts.items()
     ]
 
@@ -580,8 +584,17 @@ def _render_lineage() -> None:
             property_edges = st.session_state.get("property_datastream_edges") or []
             relevant_edges = _relevant_property_edges(property_edges, visible_rows)
 
+            show_path_counts = st.checkbox(
+                "Show path counts (×N) on edges", value=False, key="overview_lineage_show_path_counts",
+                help="Off by default: ×N is how many rows collapsed into that one arrow, not a volume metric — "
+                "easy to misread as one at a glance. Turn on if you actually want the fan-in count.",
+            )
+
             _render_lineage_legend()
-            st.graphviz_chart(_build_lineage_flowchart(visible_rows, relevant_edges), use_container_width=True)
+            st.graphviz_chart(
+                _build_lineage_flowchart(visible_rows, relevant_edges, show_path_counts=show_path_counts),
+                use_container_width=True,
+            )
 
             unresolved_ids = sorted({row["dataset"] for row in visible_rows if row["dataset"].endswith("(unresolved)")})
             if unresolved_ids:
