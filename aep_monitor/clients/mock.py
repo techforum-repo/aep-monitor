@@ -130,6 +130,30 @@ MOCK_EXTENSIONS: dict[str, list[dict[str, Any]]] = {
         },
         {"id": "EX2", "attributes": {"name": "Core", "published": True, "review_status": "approved"}},
         {"id": "EX3", "attributes": {"name": "Custom Consent Extension", "published": False, "review_status": "rejected"}},
+        # A second, separate Web SDK extension on the *same* property —
+        # confirmed live as a real configuration (not hypothetical): a
+        # property can have more than one "adobe-alloy" extension
+        # instance, each forwarding to its own destination (here, a
+        # redundant/secondary production stream). Reported live as a real
+        # bug this pins down: both extensions configure "production", and
+        # an earlier merge (dict.setdefault(), see
+        # fetch_property_datastream_edges()) silently kept only whichever
+        # extension it walked first, dropping this one's id with no
+        # indication anything was lost. Matches datastream_map.sample.json's
+        # fourth entry (-> also "Loyalty Events" — two real datastreams
+        # legitimately feeding the same dataset).
+        {
+            "id": "EX5",
+            "attributes": {
+                "name": "adobe-alloy", "display_name": "Adobe Experience Platform Web SDK (Secondary)",
+                "published": True, "review_status": "approved",
+                "settings": (
+                    "{\"instances\":[{\"name\":\"alloy\",\"sandbox\":\"prod\",\"edgeDomain\":\"edge.acmecorp.com\","
+                    "\"edgeConfigId\":\"44444444-4444-4444-4444-444444444444\"}],"
+                    "\"components\":{\"eventMerge\":false}}"
+                ),
+            },
+        },
     ],
     "PR2": [
         # Extraction is generic across every extension's `settings`, not

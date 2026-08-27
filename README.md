@@ -754,9 +754,29 @@ once per alert, not on every subsequent poll while it's still open.
   (production)") so two different real datastreams on the same property
   are never conflated into one; multiple *instances* (rare) are
   distinguished the same way, by instance name, only when more than one
-  is actually present. The DC page's Extensions tab shows every
-  environment's raw id directly (and a
-  "Raw extension responses" expander) — the fastest way to check this
+  is actually present.
+
+  **Also reported live, a genuine bug, not just an edge case**: a property
+  can have more than one Web SDK *extension* installed (not just more than
+  one instance inside one extension's own settings) — each with its own
+  "production" (etc.) but a real, different datastream id. The original
+  merge across a property's extensions used `dict.setdefault(environment,
+  id)`, which silently *dropped* every extension's id for a given
+  environment string beyond whichever one it walked first — the second
+  extension's datastream simply never appeared, with no error or gap
+  indicated. Fixed in `fetch_property_datastream_edges()` (`data.py`) by
+  collecting every extension's id per environment first and only
+  disambiguating — by extension name, or by extension id when two
+  extensions share Reactor's own `name` attribute (a technical package
+  slug like `"adobe-alloy"`, not a user-facing label, so two installs of
+  the same extension type collide on it) — when they genuinely disagree;
+  two extensions that happen to report the exact same id for the same
+  environment still collapse to one row, not a spurious duplicate. Mock
+  data demonstrates this out of the box (PR1's second Web SDK extension,
+  `MOCK_EXTENSIONS`), producing "production (EX1)"/"production (EX5)" as
+  two distinct rows both feeding "Loyalty Events". The DC page's
+  Extensions tab shows every environment's raw id directly (and a "Raw
+  extension responses" expander) — the fastest way to check this
   extraction against what a live tenant's `settings` actually contains
   before assuming `datastream_map.json` itself is wrong.
 

@@ -279,21 +279,32 @@ def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatc
 
 
 def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
-    """PR1's mock Web SDK extension carries three environment-specific
-    datastream ids — production and staging match entries in
-    datastream_map.sample.json (-> "Loyalty Events" / "Web SDK Events"),
-    development is deliberately left unmapped — mock mode should
-    demonstrate the whole Property -> Datastream -> Dataset chain, and the
-    unmapped case, out of the box."""
+    """PR1's mock Web SDK extensions carry four environment-specific
+    datastream ids across two separate extensions (EX1, EX5) — both
+    configure "production" but with genuinely different ids, staging and
+    development come from EX1 alone. Production/staging/EX5's secondary
+    all match entries in datastream_map.sample.json (-> "Loyalty Events" /
+    "Web SDK Events" / "Loyalty Events" again), development is
+    deliberately left unmapped — mock mode should demonstrate the whole
+    Property -> Datastream -> Dataset chain, the two-extensions-one-
+    environment case, and the unmapped case, out of the box."""
     dc_rows = data.fetch_dc()
     edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
     by_env = {e["environment"]: e for e in edges if e["property"] == "acme.com — Web"}
 
-    assert by_env["production"]["datastream"] == "Prod Web Datastream (production)"
-    assert by_env["production"]["dataset"] == "Loyalty Events"
-    assert by_env["production"]["mapped"] is True
-    assert by_env["production"]["mapped_dataset_id"] == "5f1a2b3c4d5e6f7a8b9c0d1e"  # raw id, for debug comparison
-    assert by_env["production"]["domains"] == ["www.acmecorp.com", "shop.acmecorp.com"]  # PR1's mock domains, passed through
+    # Two separate extensions (EX1, EX5) both configure "production" with
+    # different ids — see fetch_property_datastream_edges()'s docstring —
+    # so both must produce their own row, suffixed to stay distinguishable,
+    # rather than the second one silently disappearing.
+    assert by_env["production (EX1)"]["datastream"] == "Prod Web Datastream (production (EX1))"
+    assert by_env["production (EX1)"]["dataset"] == "Loyalty Events"
+    assert by_env["production (EX1)"]["mapped"] is True
+    assert by_env["production (EX1)"]["mapped_dataset_id"] == "5f1a2b3c4d5e6f7a8b9c0d1e"  # raw id, for debug comparison
+    assert by_env["production (EX1)"]["domains"] == ["www.acmecorp.com", "shop.acmecorp.com"]  # PR1's mock domains, passed through
+
+    assert by_env["production (EX5)"]["datastream"] == "Secondary Prod Web Datastream (production (EX5))"
+    assert by_env["production (EX5)"]["dataset"] == "Loyalty Events"  # a second, real datastream feeding the same dataset
+    assert by_env["production (EX5)"]["mapped"] is True
 
     assert by_env["staging"]["datastream"] == "Staging Web Datastream (staging)"
     assert by_env["staging"]["dataset"] == "Web SDK Events"
@@ -316,6 +327,54 @@ def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
     # resolves even though no connection will ever surface it.
     assert mobile_edges[0]["dataset"] == "Mobile App Events"
     assert mobile_edges[0]["mapped"] is True
+
+
+def test_fetch_property_datastream_edges_keeps_both_when_two_extensions_disagree_on_the_same_environment(monkeypatch):
+    """Regression, reported live: two separate extensions on one property
+    both configuring "production" but with genuinely *different*
+    datastream ids used to silently collapse to whichever extension the
+    merge walked first (dict.setdefault()) — the second id vanished with
+    no error. Both must now survive as their own row."""
+    monkeypatch.setattr(mock_module, "MOCK_EXTENSIONS", {
+        **mock_module.MOCK_EXTENSIONS,
+        "PR1": [
+            {"id": "EXA", "attributes": {"name": "adobe-alloy", "settings": '{"instances": [{"name": "alloy", "edgeConfigId": "id-from-a"}]}'}},
+            {"id": "EXB", "attributes": {"name": "adobe-alloy", "settings": '{"instances": [{"name": "alloy", "edgeConfigId": "id-from-b"}]}'}},
+        ],
+    })
+    dc_rows = data.fetch_dc()
+
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+
+    ids = {e["datastream_id"] for e in edges if e["property"] == "acme.com — Web"}
+    assert ids == {"id-from-a", "id-from-b"}  # neither dropped
+    environments = {e["environment"] for e in edges if e["property"] == "acme.com — Web"}
+    # Both extensions share the same Reactor `name` ("adobe-alloy" — a
+    # technical package slug, not a user label), so disambiguation must
+    # fall back to each extension's own id, not its (colliding) name.
+    assert environments == {"production (EXA)", "production (EXB)"}
+
+
+def test_fetch_property_datastream_edges_collapses_two_extensions_that_agree_on_the_same_id(monkeypatch):
+    """The same environment reported by two extensions with the *exact
+    same* datastream id must not manufacture a second, duplicate row —
+    only a genuine disagreement should ever trigger the disambiguating
+    suffix."""
+    monkeypatch.setattr(mock_module, "MOCK_EXTENSIONS", {
+        **mock_module.MOCK_EXTENSIONS,
+        "PR1": [
+            {"id": "EXA", "attributes": {"name": "adobe-alloy", "settings": '{"instances": [{"name": "alloy", "edgeConfigId": "same-id"}]}'}},
+            {"id": "EXB", "attributes": {"name": "adobe-alloy", "settings": '{"instances": [{"name": "alloy", "edgeConfigId": "same-id"}]}'}},
+        ],
+    })
+    dc_rows = data.fetch_dc()
+
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+
+    web_edges = [e for e in edges if e["property"] == "acme.com — Web"]
+    assert len(web_edges) == 1
+    assert web_edges[0]["environment"] == "production"  # no suffix needed — nothing to disambiguate
+    assert web_edges[0]["datastream_id"] == "same-id"
 
 
 def test_fetch_property_datastream_edges_flags_an_unmapped_datastream(monkeypatch):

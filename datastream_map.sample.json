@@ -10,5 +10,9 @@
   "22222222-2222-2222-2222-222222222222": {
     "name": "Mobile App Datastream",
     "dataset_id": "8c4d5e6f7a8b9c0d1e2f3a4b"
+  },
+  "44444444-4444-4444-4444-444444444444": {
+    "name": "Secondary Prod Web Datastream",
+    "dataset_id": "5f1a2b3c4d5e6f7a8b9c0d1e"
   }
 }

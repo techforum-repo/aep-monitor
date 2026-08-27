@@ -65,11 +65,15 @@ def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
 
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
     assert len(dc_table) == 2  # both mock DC properties
-    # PR1's mock Web SDK extension configures three environment-specific
-    # datastreams (production/staging/development) — mock mode should
-    # demonstrate the full chain, and the unmapped case, out of the box.
+    # PR1's mock Web SDK extensions configure four environment-specific
+    # datastreams across two separate extensions (both configuring
+    # "production", with different ids — see
+    # fetch_property_datastream_edges()'s docstring) — mock mode should
+    # demonstrate the full chain, the two-extensions-one-environment case,
+    # and the unmapped case, out of the box.
     pr1_datastream = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
-    assert "Prod Web Datastream (production)" in pr1_datastream
+    assert "Prod Web Datastream (production (EX1))" in pr1_datastream
+    assert "Secondary Prod Web Datastream (production (EX5))" in pr1_datastream
     # PR1 (a web property) carries its mock domains; PR2 (mobile) has none.
     assert dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Website domain(s)"] == "www.acmecorp.com, shop.acmecorp.com"
     assert dc_table[dc_table["Property"] == "Acme Mobile App"].iloc[0]["Website domain(s)"] == "—"
@@ -85,11 +89,15 @@ def test_overview_page_shows_the_end_to_end_lineage_and_dc_properties_table():
     # up as expected can be checked directly against real extracted/matched
     # values instead of guessing further.
     debug_table = next(df.value for df in at.get("dataframe") if "Datastream ID (extracted)" in df.value.columns)
-    prod_row = debug_table[(debug_table["Property"] == "acme.com — Web") & (debug_table["Environment"] == "production")].iloc[0]
+    prod_row = debug_table[(debug_table["Property"] == "acme.com — Web") & (debug_table["Environment"] == "production (EX1)")].iloc[0]
     assert prod_row["Datastream ID (extracted)"] == "00000000-0000-0000-0000-000000000000"
     assert prod_row["In map file?"] == "Yes"
     assert prod_row["Dataset ID (from map)"] == "5f1a2b3c4d5e6f7a8b9c0d1e"
     assert prod_row["Resolved dataset name"] == "Loyalty Events"
+
+    secondary_row = debug_table[(debug_table["Property"] == "acme.com — Web") & (debug_table["Environment"] == "production (EX5)")].iloc[0]
+    assert secondary_row["Datastream ID (extracted)"] == "44444444-4444-4444-4444-444444444444"
+    assert secondary_row["Resolved dataset name"] == "Loyalty Events"  # a second, real datastream feeding the same dataset
 
     # "All connections" was removed — a real org's full, unfiltered pipeline
     # is reliably too dense to read, so the picker always scopes to one.
@@ -160,10 +168,10 @@ def test_overview_lineage_renders_without_exception_when_focused_on_a_connection
 
     assert at.exception == []
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
-    assert "Prod Web Datastream (production)" in dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
+    assert "Prod Web Datastream (production (EX1))" in dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
 
     debug_table = next(df.value for df in at.get("dataframe") if "Datastream ID (extracted)" in df.value.columns)
-    assert "Prod Web Datastream (production)" in debug_table[debug_table["Property"] == "acme.com — Web"]["Datastream"].tolist()[0]
+    assert "Prod Web Datastream (production (EX1))" in debug_table[debug_table["Property"] == "acme.com — Web"]["Datastream"].tolist()[0]
     assert debug_table[debug_table["Property"] == "acme.com — Web"]["Website domain(s)"].iloc[0] == "www.acmecorp.com, shop.acmecorp.com"
 
 
@@ -198,10 +206,11 @@ def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch)
 
     assert at.exception == []
     dc_table = next(df.value for df in at.get("dataframe") if "Property" in df.value.columns and "Extensions" in df.value.columns)
-    # Production now resolves; staging/development are still unmapped in
-    # this patched map (only the production id was added to it above).
+    # EX1's production now resolves; EX5's secondary production/staging/
+    # development are still unmapped in this patched map (only the one id
+    # was added to it above).
     pr1_datastream = dc_table[dc_table["Property"] == "acme.com — Web"].iloc[0]["Datastream"]
-    assert "Prod Web Datastream (production)" in pr1_datastream
+    assert "Prod Web Datastream (production (EX1))" in pr1_datastream
     assert "unmapped, staging" in pr1_datastream
 
 

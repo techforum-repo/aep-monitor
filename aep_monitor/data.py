@@ -328,6 +328,14 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
     same underlying datastream id both still get their own row/label (kept
     distinguishable by environment) rather than being silently collapsed.
 
+    Also reported live: two *separate extensions* on the same property can
+    each configure their own "production" (etc.) instance with genuinely
+    different datastream ids — every one still gets its own row, the
+    environment label suffixed with the contributing extension's name only
+    when they actually disagree (see the extension-merge loop below);
+    an earlier version silently dropped every one past the first extension
+    walked for a given environment string.
+
     Takes `dc_rows` (already-fetched property rows, e.g. from
     st.session_state) rather than fetching Data Collection itself — that
     fetch is already a full per-property walk over extensions/rules/
@@ -356,10 +364,43 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
         # A property can have more than one extension with settings (rare,
         # but not impossible) — merge every environment found across all
         # of them rather than assuming exactly one extension carries them.
-        datastream_ids: dict[str, str] = {}
+        #
+        # Reported live: this used to merge via dict.setdefault(environment,
+        # datastream_id), which silently *dropped* every extension's id for
+        # an environment string beyond the first one walked — two separate
+        # Web SDK extensions on the same property, each with its own
+        # "production" instance but a genuinely different datastream id,
+        # collapsed to whichever extension happened to come first, the
+        # second one invisible with no error or indication anything was
+        # lost. Collecting every (extension name, id, datastream id) triple
+        # per environment first, then only disambiguating with a suffix
+        # when two extensions actually disagree on the datastream id, fixes
+        # that while still collapsing to one plain row when they happen to
+        # agree (e.g. the same Web SDK extension appearing twice in
+        # Reactor's response, which shouldn't manufacture a second row for
+        # the exact same datastream).
+        ids_by_env: dict[str, list[tuple[str, str, str]]] = {}
         for ext in prop.get("extensions", []):
             for environment, datastream_id in (ext.get("datastream_ids") or {}).items():
-                datastream_ids.setdefault(environment, datastream_id)
+                ids_by_env.setdefault(environment, []).append((ext.get("name") or "", ext.get("extension_id") or "", datastream_id))
+
+        datastream_ids: dict[str, str] = {}
+        for environment, entries in ids_by_env.items():
+            distinct_ids = {ds_id for _, _, ds_id in entries}
+            if len(distinct_ids) == 1:
+                datastream_ids[environment] = entries[0][2]
+            else:
+                # Extension *name* is Reactor's technical package slug
+                # ("adobe-alloy"), not a user-facing label — two separate
+                # installs of the same Web SDK extension share it, so name
+                # alone can't disambiguate them; fall back to the
+                # extension's own (always-unique) id whenever the names in
+                # this colliding group aren't themselves all distinct.
+                names = [name for name, _, _ in entries]
+                names_are_unique = len(set(names)) == len(names)
+                for idx, (ext_name, ext_id, ds_id) in enumerate(entries):
+                    suffix = ext_name if (ext_name and names_are_unique) else (ext_id or f"extension {idx + 1}")
+                    datastream_ids[f"{environment} ({suffix})"] = ds_id
 
         for environment, datastream_id in datastream_ids.items():
             mapped_entry = datastream_map.get(datastream_id)
