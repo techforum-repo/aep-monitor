@@ -64,6 +64,24 @@ def test_overview_page_shows_the_end_to_end_lineage_and_unlinked_dc_properties()
     assert len(dc_table) == 2  # both mock DC properties, listed unconnected
 
 
+def test_overview_lineage_names_the_cja_permission_gap_when_connections_are_empty(monkeypatch):
+    """Regression: a generic "nothing to chart" message was indistinguishable
+    from the much more common, well-documented cause (this credential can't
+    see any CJA connections at all — the lineage walk starts there, so zero
+    connections means zero rows no matter what else exists) — reported live
+    as confusing for exactly that reason. Must name the real cause instead,
+    same as the CJA page's own empty-connections note."""
+    from aep_monitor.clients import mock as mock_module
+    monkeypatch.setattr(mock_module, "MOCK_CONNECTIONS", [])
+
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+
+    assert at.exception == []
+    info_text = " ".join(i.value for i in at.info)
+    assert "product-administration" in info_text or "product administration" in info_text
+
+
 def test_sdr_page_loads_dataview_components_and_schema_fields_on_selection():
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()

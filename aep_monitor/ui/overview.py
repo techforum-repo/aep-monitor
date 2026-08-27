@@ -244,7 +244,21 @@ def _render_lineage() -> None:
     else:
         rows = st.session_state.get("lineage_rows") or []
         if not rows:
-            st.caption("No datasets, connections, data views, or projects found to chart.")
+            if not (st.session_state.cja_connections or []):
+                # The single most common reason this is empty, by far —
+                # worth naming directly rather than a generic empty state,
+                # since it's easy to mistake for a bug in this view when
+                # it's actually upstream: the lineage walk starts from
+                # connections, so zero connections means zero rows no
+                # matter what datasets/data views/projects exist.
+                st.info(
+                    "No CJA connections visible to this credential — almost always the same product-administration "
+                    "gap the CJA page's own \"No connections found\" note explains (Adobe's API returns 0 "
+                    "connections, no error, for a technical account without that privilege), not a bug in this "
+                    "view. See README Known Limitations for how to grant it."
+                )
+            else:
+                st.caption("No datasets, data views, or projects found to chart, despite having visible connections.")
         else:
             st.plotly_chart(_build_lineage_sankey(rows), use_container_width=True, key="overview_lineage_sankey")
 
