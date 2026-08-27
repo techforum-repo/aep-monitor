@@ -227,6 +227,21 @@ def test_flowchart_property_edges_are_not_scoped_by_this_function_itself():
     assert dot.count('label="Totally Unrelated Dataset"') == 1
 
 
+def test_flowchart_edge_with_no_property_skips_property_and_domain_stages():
+    """An orphan datastream_map.json entry (matched to no live property —
+    see fetch_property_datastream_edges()'s "no property" case) has
+    property="" and domains=[]. It must still get its own Datastream node
+    linked straight to Dataset — just without a Property or Domain node
+    anywhere in the chart, not an empty/blank node standing in for one."""
+    edges = [{"property": "", "domains": [], "environment": "", "datastream": "Legacy Datastream (no property)", "dataset": "CRM Customer Batch"}]
+    dot = _build_lineage_flowchart([], edges)
+
+    datastream = _node_id(dot, "Legacy Datastream (no property)")
+    dataset = _node_id(dot, "CRM Customer Batch")
+    assert _edge_label(dot, datastream, dataset) is None  # the one real edge, count 1
+    assert dot.count("label=") == 2  # exactly the two nodes — no Property, no Domain
+
+
 def test_flowchart_anchor_chain_skips_a_stage_with_no_nodes_at_all():
     """Regression this app's own docstring calls out: without an explicit
     same-rank anchor per stage, Graphviz is free to place a stage with no

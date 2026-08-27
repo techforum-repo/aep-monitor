@@ -328,6 +328,59 @@ def test_fetch_property_datastream_edges_resolves_the_full_mock_chain():
     assert mobile_edges[0]["dataset"] == "Mobile App Events"
     assert mobile_edges[0]["mapped"] is True
 
+    # datastream_map.sample.json's fifth entry ("Legacy CRM Datastream") is
+    # deliberately never extracted from any mock property's extensions at
+    # all — a real mapping to a real dataset, but no live property claims
+    # it any more. Must still surface with property="" rather than
+    # vanishing entirely.
+    orphan_edges = [e for e in edges if e["datastream_id"] == "55555555-5555-5555-5555-555555555555"]
+    assert len(orphan_edges) == 1
+    assert orphan_edges[0]["property"] == ""
+    assert orphan_edges[0]["domains"] == []
+    assert orphan_edges[0]["environment"] == ""
+    assert orphan_edges[0]["datastream"] == "Legacy CRM Datastream (no property)"
+    assert orphan_edges[0]["dataset"] == "CRM Customer Batch"
+    assert orphan_edges[0]["mapped"] is True
+
+
+def test_fetch_property_datastream_edges_orphan_mapping_is_not_duplicated_when_a_property_does_claim_it(monkeypatch):
+    """The orphan pass only fires for a datastream_map.json id that no
+    property's extraction actually found — an id a real property *does*
+    carry must appear exactly once (from the property walk), never a
+    second time from the orphan pass too."""
+    monkeypatch.setattr(mock_module, "MOCK_EXTENSIONS", {
+        **mock_module.MOCK_EXTENSIONS,
+        "PR1": [{
+            "id": "EX1",
+            "attributes": {
+                "name": "adobe-alloy",
+                "settings": '{"instances": [{"name": "alloy", "edgeConfigId": "55555555-5555-5555-5555-555555555555"}]}',
+            },
+        }],
+    })
+    dc_rows = data.fetch_dc()
+
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+
+    matching = [e for e in edges if e["datastream_id"] == "55555555-5555-5555-5555-555555555555"]
+    assert len(matching) == 1
+    assert matching[0]["property"] == "acme.com — Web"  # claimed by a real property, not the orphan pass
+
+
+def test_fetch_property_datastream_edges_orphan_mapping_flags_an_unresolvable_dataset(monkeypatch):
+    """An orphan mapping's own dataset_id can itself fail to resolve
+    (wrong sandbox, deleted dataset, typo) — same "(unresolved)" fallback
+    as every other dataset lookup in this function, not a crash."""
+    monkeypatch.setattr(data, "load_datastream_map", lambda: {
+        "orphan-id": {"name": "Orphan Datastream", "dataset_id": "not-a-real-dataset-id"},
+    })
+
+    dc_rows = data.fetch_dc()
+    edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+
+    orphan = next(e for e in edges if e["datastream_id"] == "orphan-id")
+    assert orphan["dataset"] == "not-a-real-dataset-id (unresolved)"
+
 
 def test_fetch_property_datastream_edges_keeps_both_when_two_extensions_disagree_on_the_same_environment(monkeypatch):
     """Regression, reported live: two separate extensions on one property

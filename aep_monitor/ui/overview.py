@@ -482,8 +482,13 @@ def _render_property_datastream_debug(property_edges: list[dict]) -> None:
                 pd.DataFrame([
                     {
                         "Website domain(s)": ", ".join(e["domains"]) or "—",
-                        "Property": e["property"],
-                        "Environment": e["environment"],
+                        # Blank for a datastream_map.json entry no live
+                        # property actually claims (see
+                        # fetch_property_datastream_edges()'s "no property"
+                        # case) — "—", not an empty cell, so it reads as
+                        # "none" rather than looking like missing data.
+                        "Property": e["property"] or "—",
+                        "Environment": e["environment"] or "—",
                         "Datastream": e["datastream"],
                         "Datastream ID (extracted)": e["datastream_id"],
                         "In map file?": "Yes" if e["mapped"] else "No",
@@ -509,6 +514,9 @@ def _render_lineage() -> None:
         "README) — shown only for the property/datastream(s) that actually feed *this* connection's own "
         "dataset(s); a property whose datastream maps elsewhere (or not at all yet) stays out of the picture "
         "for this connection, and the unfiltered debug table below still lists every extracted value regardless. "
+        "A mapped datastream with no live property behind it at all (the property was deleted/reconfigured "
+        "since the mapping was written, or it was never tied to one) still shows, feeding its dataset directly "
+        "with no Property/Domain boxes upstream of it. "
         "Every unresolved dataset id collapses into one shared node, and the chart is always scoped to one "
         "connection at a time (pick it below) — a real org's full, unfiltered pipeline is reliably too dense to "
         "read at once. Hover any node, or check the legend above the chart, for which color is which stage."

@@ -350,6 +350,17 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
     datastream isn't mapped yet" stays visible instead of just
     disappearing.
 
+    The reverse gap, also reported live: a datastream_map.json entry whose
+    id doesn't match *any* property's extracted datastream id at all (the
+    property was deleted/reconfigured since the mapping was written, or
+    the datastream was never tied to a Reactor property to begin with) —
+    "a datastream with [a dataset] relationship should [still be]
+    displayed" even with no property to show it under. Every such entry
+    still gets its own row too (`property=""`, `mapped=True`), appended
+    after the property walk below once every id it actually found is
+    known — never silently invisible just because no property currently
+    claims it.
+
     `domains` is the property's own `domains` attribute (confirmed via
     Adobe's Properties endpoint docs — an array of the web domains that
     load this property's library), passed through unchanged from
@@ -360,6 +371,7 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
     dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
 
     rows: list[dict[str, Any]] = []
+    seen_datastream_ids: set[str] = set()
     for prop in dc_rows:
         # A property can have more than one extension with settings (rare,
         # but not impossible) — merge every environment found across all
@@ -403,6 +415,7 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
                     datastream_ids[f"{environment} ({suffix})"] = ds_id
 
         for environment, datastream_id in datastream_ids.items():
+            seen_datastream_ids.add(datastream_id)
             mapped_entry = datastream_map.get(datastream_id)
             mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
             if mapped_entry:
@@ -423,6 +436,31 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
                 # text. See ui/overview.py's debug expander.
                 "mapped_dataset_id": mapped_dataset_id,
             })
+
+    # Reported live: a datastream_map.json entry with a real, human-written
+    # mapping to a real dataset, but whose id was never actually extracted
+    # from any property's Web SDK extension above — the property that once
+    # used it may have been deleted/reconfigured since the mapping was
+    # written, or the datastream was never tied to a Reactor property in
+    # the first place (a server-side/direct-API datastream). These were
+    # completely invisible anywhere in the app despite the mapping itself
+    # resolving a real dataset — the same "never silently dropped"
+    # treatment every other unmapped/unresolved case here already gets.
+    # `property`/`domains`/`environment` are left blank rather than
+    # fabricated — ui.overview._build_lineage_flowchart()'s _node() treats
+    # a blank name as "no node", so this correctly skips the Property and
+    # Website Domain stages entirely and links straight from Datastream to
+    # Dataset, same honest dead-end/edge-skip treatment as every other
+    # missing stage in that diagram.
+    for datastream_id, entry in datastream_map.items():
+        if datastream_id in seen_datastream_ids:
+            continue
+        dataset_label = dataset_names.get(entry["dataset_id"], f"{entry['dataset_id']} (unresolved)" if entry["dataset_id"] else "")
+        rows.append({
+            "property": "", "domains": [], "environment": "", "datastream_id": datastream_id,
+            "datastream": f"{entry['name'] or datastream_id} (no property)",
+            "dataset": dataset_label, "mapped": True, "mapped_dataset_id": entry["dataset_id"],
+        })
     return rows
 
 

@@ -14,5 +14,9 @@
   "44444444-4444-4444-4444-444444444444": {
     "name": "Secondary Prod Web Datastream",
     "dataset_id": "5f1a2b3c4d5e6f7a8b9c0d1e"
+  },
+  "55555555-5555-5555-5555-555555555555": {
+    "name": "Legacy CRM Datastream",
+    "dataset_id": "7b3c4d5e6f7a8b9c0d1e2f3a"
   }
 }

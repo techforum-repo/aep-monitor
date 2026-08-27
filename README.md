@@ -797,6 +797,24 @@ once per alert, not on every subsequent poll while it's still open.
   a *sandbox change*, silently ignoring a plain file edit; the refresh
   button now re-reads it too.
 
+  The reverse gap is handled too, on request ("a datastream with other
+  relationship should be displayed" even without a property behind it): an
+  entry *in* the file whose id doesn't match any property's currently
+  extracted datastream id at all — the property that once used it was
+  deleted or reconfigured since the mapping was written, or the datastream
+  was never tied to a Reactor property in the first place (e.g. a
+  server-side/direct-API datastream) — used to be completely invisible
+  anywhere in this app despite resolving a real dataset. It now still gets
+  its own row (`property=""`), added once the property walk is done and
+  it's clear no property actually claimed that id
+  (`fetch_property_datastream_edges()`'s docstring); in the flowchart this
+  correctly skips the Property and Website Domain stages entirely and
+  links straight from Datastream to Dataset, the same edge-skipping
+  treatment as any other missing stage in this diagram. Mock data
+  demonstrates it out of the box — `datastream_map.sample.json`'s fifth
+  entry, "Legacy CRM Datastream," resolves to "CRM Customer Batch" with no
+  mock property behind it at all.
+
   The flowchart is always scoped to one connection at a time via a **"Focus
   on connection"** picker — an unfiltered, all-connections view was tried
   first, but at real-org scale (dozens of connections/projects) it's
