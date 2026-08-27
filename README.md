@@ -16,7 +16,7 @@ provisioning to cross-product monitoring.
 
 | Page | API | Signal |
 |---|---|---|
-| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, and a data-lifecycle quota breakdown |
+| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow (AEP Dataset → CJA Connection → Data View → Project) with Data Collection properties listed alongside, explicitly not wired into it |
 | **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend — plus a **Connector** column resolving each flow's `flowSpec` to a display name, since `/flows` returns inbound ingestion and outbound activation flows undifferentiated (see Known Limitations) |
 | **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
 | **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
@@ -641,6 +641,25 @@ once per alert, not on every subsequent poll while it's still open.
   (resolves to an Enterprise ID), assign as Product Profile
   Administrator. The CJA and SDR pages show this same explanation in-app
   when Connections comes back empty.
+- **Overview's end-to-end data flow** (`fetch_cja_dataset_lineage()` in
+  `data.py`, `_build_lineage_sankey()` in `ui/overview.py`) charts AEP
+  Dataset → CJA Connection → Data View → Project using the one genuinely
+  confirmed cross-product link this app has found: a CJA connection's own
+  `dataSets` field (`expansion=dataSets`, confirmed via Adobe's docs —
+  `{dataSetId, domain, type, timestampId, visitorId, identityNamespace,
+  usePrimaryIdNamespace, identityMap, name, streaming}` per entry).
+  Data Collection properties/rules/data elements are listed separately
+  underneath, deliberately **not** wired into this flow — there is no
+  public API for Datastream configuration (which property's Web SDK
+  datastream sends to which dataset), confirmed absent when this app's
+  DataStreams support was researched, so that link can't be discovered
+  programmatically; only whoever configured it knows the actual mapping.
+  A dataset id a connection references but this sandbox's own dataset
+  list can't resolve (a real possibility — Datasets are sandbox-scoped,
+  Connections are org-wide, so a connection can reference a dataset from
+  a *different* sandbox than the one currently active) shows up flagged
+  `"<id> (unresolved)"` in the chart rather than a bare id or a silently
+  dropped node.
 - **SDR page** (`aep_monitor/clients/cja.py`'s dimensions/metrics
   endpoints, `aep_monitor/clients/schema_registry.py`) is the newest,
   least-exercised integration in this app — same caveat as Audit Query.

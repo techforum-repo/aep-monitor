@@ -174,9 +174,25 @@ MOCK_DC_AUDIT_EVENTS: list[dict[str, Any]] = [
 # response otherwise. No "status"/"serviceStatus" field exists on this API at
 # all (confirmed via Adobe's docs); isDeleted/isDisabled are the only real
 # health signals, which parse_connection() derives a status label from.
+# dataSets links each connection to its constituent AEP datasets by id —
+# confirmed live via Adobe's docs (see clients/cja.py's parse_connection())
+# as the one genuine cross-product link between an AEP dataset and a CJA
+# connection. Ids match MOCK_DATASETS below, for the Overview page's
+# end-to-end lineage view.
 MOCK_CONNECTIONS: list[dict[str, Any]] = [
-    {"id": "conn-web-mobile", "name": "Web + Mobile Unified", "isDeleted": False, "isDisabled": False, "modified": _iso(60 * 5)},
-    {"id": "conn-crm", "name": "CRM Connection", "isDeleted": False, "isDisabled": True, "modified": _iso(60 * 200)},
+    {
+        "id": "conn-web-mobile", "name": "Web + Mobile Unified", "isDeleted": False, "isDisabled": False, "modified": _iso(60 * 5),
+        "dataSets": [
+            {"dataSetId": "5f1a2b3c4d5e6f7a8b9c0d1e", "domain": "catalog", "type": "event", "name": "Loyalty Events", "streaming": True},
+            {"dataSetId": "6a2b3c4d5e6f7a8b9c0d1e2f", "domain": "catalog", "type": "event", "name": "Web SDK Events", "streaming": True},
+        ],
+    },
+    {
+        "id": "conn-crm", "name": "CRM Connection", "isDeleted": False, "isDisabled": True, "modified": _iso(60 * 200),
+        "dataSets": [
+            {"dataSetId": "7b3c4d5e6f7a8b9c0d1e2f3a", "domain": "catalog", "type": "event", "name": "CRM Customer Batch", "streaming": False},
+        ],
+    },
 ]
 
 # Shaped like the real response with expansion=name,description,owner,

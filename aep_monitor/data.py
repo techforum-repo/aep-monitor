@@ -228,6 +228,64 @@ def fetch_cja_projects() -> list[dict[str, Any]]:
     return [cja_api.parse_project(item) for item in raw]
 
 
+def fetch_cja_dataset_lineage(sandbox: str | None = None) -> list[dict[str, Any]]:
+    """One row per confirmed hop-by-hop path through the pipeline: AEP
+    Dataset -> CJA Connection (via the connection's own `dataset_ids`,
+    confirmed live via Adobe's docs -- see clients/cja.py's
+    parse_connection()) -> CJA Data View (via connection_id) -> CJA
+    Project (via dataview_id). Each row is
+    {dataset, connection, dataview, project} with the *name* already
+    resolved (never a raw id) — a stage with nothing downstream yet (a
+    connection with no data views, a data view with no projects) still
+    gets a row with that stage's rest left blank, rather than being
+    dropped, so the Overview page's lineage view can show where the
+    pipeline dead-ends, not just where it's fully wired end to end.
+
+    Datasets are sandbox-scoped (Catalog Service); Connections/Data Views/
+    Projects are org-wide (see fetch_sandbox_comparison()'s docstring) —
+    so a connection's dataset_ids can reference a dataset from a
+    *different* sandbox than the one passed in here, which this function
+    has no way to detect (there's no "which sandbox is this dataset id
+    in" lookup) and will just show as an unresolved id, same as any other
+    permission-based gap this app already surfaces that way.
+
+    Deliberately excludes Data Collection properties/rules/data elements
+    — there is no public API for Datastream configuration (which DC
+    property's Web SDK datastream sends to which dataset), so that link
+    can't be discovered programmatically; the Overview page shows DC
+    properties as a separate, explicitly-unconnected group instead of
+    guessing at a link here."""
+    dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
+    connections = fetch_cja_connections()
+    dataviews = fetch_cja_dataviews()
+    projects = fetch_cja_projects()
+
+    dataviews_by_conn: dict[str, list[dict[str, Any]]] = {}
+    for dv in dataviews:
+        dataviews_by_conn.setdefault(dv["connection_id"], []).append(dv)
+    projects_by_dv: dict[str, list[dict[str, Any]]] = {}
+    for p in projects:
+        projects_by_dv.setdefault(p["dataview_id"], []).append(p)
+
+    rows: list[dict[str, Any]] = []
+    for conn in connections:
+        dataset_ids = conn.get("dataset_ids") or [""]  # still show the connection even with no known dataset
+        conn_dataviews = dataviews_by_conn.get(conn["connection_id"], [])
+        for dataset_id in dataset_ids:
+            dataset_label = dataset_names.get(dataset_id, f"{dataset_id} (unresolved)" if dataset_id else "—")
+            if not conn_dataviews:
+                rows.append({"dataset": dataset_label, "connection": conn["name"], "dataview": "", "project": ""})
+                continue
+            for dv in conn_dataviews:
+                dv_projects = projects_by_dv.get(dv["dataview_id"], [])
+                if not dv_projects:
+                    rows.append({"dataset": dataset_label, "connection": conn["name"], "dataview": dv["name"], "project": ""})
+                    continue
+                for p in dv_projects:
+                    rows.append({"dataset": dataset_label, "connection": conn["name"], "dataview": dv["name"], "project": p["name"]})
+    return rows
+
+
 _NON_COMPONENT_ENTITY_TYPES = {"ReportSuite", "DateRange"}
 
 

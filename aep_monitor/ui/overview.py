@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from .. import alerts, database
+from .. import alerts, data, database
 from ..config import settings
 from ..errors import friendly_error
 from ..poller import refresh_all
@@ -164,3 +165,104 @@ def render() -> None:
                         "raises an early warning on the Alerts page, separately from the plain "
                         f"{settings.alert_quota_threshold_pct:.0f}% threshold alert above."
                     )
+
+    _render_lineage()
+
+
+def _do_refresh_lineage() -> None:
+    active_sandbox = get_active_sandbox()
+    try:
+        st.session_state["lineage_rows"] = data.fetch_cja_dataset_lineage(sandbox=active_sandbox)
+        mark_cache_sandbox("lineage_rows", active_sandbox)
+        st.session_state["_lineage_error"] = None
+    except Exception as exc:
+        st.session_state["_lineage_error"] = exc
+
+
+# One fixed color per pipeline stage, applied to every node at that stage —
+# not a cycled/generated palette — so a viewer learns "blue = dataset"
+# once and it holds across every Sankey render, not just this session.
+_LINEAGE_STAGE_COLORS = {"dataset": "#2a78d6", "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa"}
+
+
+def _build_lineage_sankey(rows: list[dict]) -> go.Figure:
+    """Turns fetch_cja_dataset_lineage()'s flat per-path rows into a
+    plotly Sankey's node/link arrays. A node is keyed by (stage, name) —
+    not name alone — so a coincidental name collision across stages (e.g.
+    a project happening to share a name with a dataset) can never merge
+    two conceptually different nodes into one; multiple rows contributing
+    the same stage-to-stage edge are collapsed into one link whose value
+    is the count of paths through it, rather than one link per row."""
+    node_index: dict[tuple[str, str], int] = {}
+    node_labels: list[str] = []
+    node_colors: list[str] = []
+
+    def _node(stage: str, name: str) -> int | None:
+        if not name:
+            return None
+        key = (stage, name)
+        if key not in node_index:
+            node_index[key] = len(node_labels)
+            node_labels.append(name)
+            node_colors.append(_LINEAGE_STAGE_COLORS[stage])
+        return node_index[key]
+
+    link_counts: dict[tuple[int, int], int] = {}
+    for row in rows:
+        stage_nodes = [
+            _node("dataset", row["dataset"]), _node("connection", row["connection"]),
+            _node("dataview", row["dataview"]), _node("project", row["project"]),
+        ]
+        for a, b in zip(stage_nodes, stage_nodes[1:]):
+            if a is not None and b is not None:
+                link_counts[(a, b)] = link_counts.get((a, b), 0) + 1
+
+    fig = go.Figure(go.Sankey(
+        node=dict(label=node_labels, color=node_colors, pad=15, thickness=16),
+        link=dict(source=[a for a, _ in link_counts], target=[b for _, b in link_counts], value=list(link_counts.values())),
+    ))
+    fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), font_size=12)
+    return fig
+
+
+def _render_lineage() -> None:
+    st.divider()
+    st.markdown("#### End-to-end data flow")
+    st.caption(
+        "AEP Dataset → CJA Connection → CJA Data View → CJA Project, using confirmed API links: a connection's "
+        "own `dataSets` field, its data views' parent-connection binding, and a project's data-view binding. "
+        "Data Collection properties are listed separately below, **not** connected into this flow — there's no "
+        "public API for Datastream configuration (which property's Web SDK datastream sends to which dataset), "
+        "so that link can't be discovered programmatically; only whoever configured it knows the mapping."
+    )
+    if st.session_state.get("lineage_rows") is None or sandbox_changed_since_cache("lineage_rows", get_active_sandbox()):
+        _do_refresh_lineage()
+
+    error = st.session_state.get("_lineage_error")
+    if error is not None:
+        st.warning(f"Couldn't build the data flow: {error}")
+    else:
+        rows = st.session_state.get("lineage_rows") or []
+        if not rows:
+            st.caption("No datasets, connections, data views, or projects found to chart.")
+        else:
+            st.plotly_chart(_build_lineage_sankey(rows), use_container_width=True, key="overview_lineage_sankey")
+
+    st.markdown("###### Data Collection properties (not linked above)")
+    dc_rows = st.session_state.dc_rows or []
+    if not dc_rows:
+        st.caption("No Data Collection properties found.")
+    else:
+        st.dataframe(
+            pd.DataFrame([
+                {
+                    "Property": r["property_name"],
+                    "Extensions": r["extension_count"],
+                    "Rules": r["rule_count"],
+                    "Data elements": r["data_element_count"],
+                    "Issues": r["extension_issue_count"] + r["library_issue_count"],
+                }
+                for r in dc_rows
+            ]),
+            use_container_width=True, hide_index=True, key="overview_dc_lineage_table",
+        )

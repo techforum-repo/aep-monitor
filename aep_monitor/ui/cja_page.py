@@ -6,31 +6,16 @@ import streamlit as st
 from .. import data, database
 from ..poller import refresh_cja
 from ..utils import safe_csv
-from .shared import format_timestamp, refresh_button, render_friendly_error, status_pill
-
-
-def _resolve_name(lookup: dict[str, str], entity_id: str) -> str:
-    """Resolve an id to a display name via `lookup`, falling back to the
-    raw id — but visibly flagged as unresolved rather than blending in as
-    if it were an actual name. A real, expected case (not just a bug):
-    Connections needs product administration to see the full org-wide
-    list and Data Views needs the credential's own Product Profile
-    permissions (see README Known Limitations) — a connection/data view a
-    project or data view references but this credential can't itself see
-    falls back here, distinguishably, instead of silently."""
-    if not entity_id:
-        return "—"
-    name = lookup.get(entity_id)
-    return name if name else f"{entity_id} (unresolved)"
+from .shared import format_timestamp, refresh_button, render_friendly_error, resolve_name, status_pill
 
 
 def _resolve_project_connection(dataview_id: str, conn_id_by_dv: dict[str, str], names_by_conn: dict[str, str]) -> str:
     """Two-hop resolution for the Projects table's Connection column
     (project -> data view -> connection). Regression: piping
-    conn_id_by_dv.get(dataview_id, "") straight into _resolve_name() made
+    conn_id_by_dv.get(dataview_id, "") straight into resolve_name() made
     an unresolvable *data view* look identical to "this project genuinely
     has no connection" — the empty-string default for a missed first hop
-    hit _resolve_name()'s own not-flagged "—" case, even though the same
+    hit resolve_name()'s own not-flagged "—" case, even though the same
     row's Data view column correctly showed that dataview_id as
     unresolved. Handled explicitly here instead: no dataview_id at all is
     the genuine "—" case; a dataview_id that isn't in this credential's
@@ -40,7 +25,7 @@ def _resolve_project_connection(dataview_id: str, conn_id_by_dv: dict[str, str],
         return "—"
     if dataview_id not in conn_id_by_dv:
         return f"{dataview_id} (data view unresolved)"
-    return _resolve_name(names_by_conn, conn_id_by_dv[dataview_id])
+    return resolve_name(names_by_conn, conn_id_by_dv[dataview_id])
 
 
 def _ensure_loaded() -> None:
@@ -117,7 +102,7 @@ def render() -> None:
     else:
         names_by_conn = {c["connection_id"]: c["name"] for c in connections}
         table = pd.DataFrame([
-            {"Data view": d["name"], "Connection": _resolve_name(names_by_conn, d["connection_id"]), "Owner": d["owner"] or "—"}
+            {"Data view": d["name"], "Connection": resolve_name(names_by_conn, d["connection_id"]), "Owner": d["owner"] or "—"}
             for d in dataviews
         ])
         st.dataframe(table, use_container_width=True, hide_index=True, key="cja_dataviews_table")
@@ -143,7 +128,7 @@ def render() -> None:
         table = pd.DataFrame([
             {
                 "Project": p["name"],
-                "Data view": _resolve_name(names_by_dv, p["dataview_id"]),
+                "Data view": resolve_name(names_by_dv, p["dataview_id"]),
                 # Two-hop resolution (project -> data view -> connection) —
                 # unresolved at either hop still falls back distinguishably
                 # rather than silently showing "—" as if there were no

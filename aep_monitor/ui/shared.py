@@ -146,6 +146,23 @@ def status_pill(state: str) -> str:
     return f"{icon} {state or 'unknown'}"
 
 
+def resolve_name(lookup: dict[str, str], entity_id: str) -> str:
+    """Resolve an id to a display name via `lookup`, falling back to the
+    raw id — but visibly flagged as unresolved rather than blending in as
+    if it were an actual name. A real, expected case across CJA pages (not
+    just a bug): Connections needs product administration to see the full
+    org-wide list, and Data Views needs the credential's own Product
+    Profile permissions (see README Known Limitations) — a connection/data
+    view something else references but this credential can't itself see
+    falls back here, distinguishably, instead of silently. Originally
+    local to ui/cja_page.py; promoted here once the Overview page's
+    end-to-end lineage view needed the identical resolve-or-flag behavior."""
+    if not entity_id:
+        return "—"
+    name = lookup.get(entity_id)
+    return name if name else f"{entity_id} (unresolved)"
+
+
 def format_timestamp(value: str | None) -> str:
     if not value:
         return "—"

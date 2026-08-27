@@ -39,7 +39,7 @@ class CJAClient(BaseAdobeClient):
         # (a comma-delimited list) — omitting it was the live bug reported
         # as "displays id not name" (and silently meant the health-status
         # alert below could never fire, since it isn't a default field either).
-        data = await self.get(http, "/connections", params={"limit": limit, "expansion": "name,description,owner,isDeleted,isDisabled,modified"})
+        data = await self.get(http, "/connections", params={"limit": limit, "expansion": "name,description,owner,isDeleted,isDisabled,modified,dataSets"})
         items = data.get("content", data.get("data", [])) if isinstance(data, dict) else (data if isinstance(data, list) else [])
         return items if isinstance(items, list) else []
 
@@ -158,12 +158,21 @@ def parse_connection(item: dict[str, Any]) -> dict[str, Any]:
         status = "disabled"
     else:
         status = "active"
+    # Confirmed via Adobe's docs: expansion=dataSets populates this with
+    # the connection's constituent AEP datasets — {dataSetId, domain, type,
+    # timestampId, visitorId, identityNamespace, usePrimaryIdNamespace,
+    # identityMap, name, streaming} per entry. This is the one genuinely
+    # confirmed link between an AEP dataset and a CJA connection; nothing
+    # else in this API ties the two products' entities together directly.
+    data_sets = item.get("dataSets")
+    dataset_ids = [str(ds.get("dataSetId")) for ds in data_sets if isinstance(ds, dict) and ds.get("dataSetId")] if isinstance(data_sets, list) else []
     return {
         "connection_id": str(item.get("id") or ""),
         "name": str(item.get("name") or item.get("id") or "(unnamed)"),
         "status": status,
         "has_issue": bool(item.get("isDeleted") or item.get("isDisabled")),
         "updated_at": str(item.get("modified") or ""),
+        "dataset_ids": dataset_ids,
         "raw": item,
     }
 

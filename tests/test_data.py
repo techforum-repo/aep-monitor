@@ -221,3 +221,45 @@ def test_fetch_user_display_names_degrades_to_empty_on_a_fetch_failure_instead_o
     assert names == {}
 
 
+
+
+def test_fetch_cja_dataset_lineage_builds_the_full_confirmed_chain():
+    """Loyalty Events/Web SDK Events -> Web + Mobile Unified -> both mock
+    data views -> their projects should each produce a full four-stage
+    row, using resolved names throughout (never a raw id)."""
+    rows = data.fetch_cja_dataset_lineage(sandbox="prod")
+    full_chains = [r for r in rows if r["dataset"] == "Loyalty Events" and r["project"] == "Executive Weekly Report"]
+    assert len(full_chains) == 1
+    row = full_chains[0]
+    assert row == {
+        "dataset": "Loyalty Events", "connection": "Web + Mobile Unified",
+        "dataview": "Executive Dashboard View", "project": "Executive Weekly Report",
+    }
+
+
+def test_fetch_cja_dataset_lineage_shows_a_dead_end_instead_of_dropping_it():
+    """CRM Connection's dataset (CRM Customer Batch) has no data view bound
+    to it in mock data — that must still produce a row (dataset ->
+    connection, with dataview/project left blank), not silently vanish."""
+    rows = data.fetch_cja_dataset_lineage(sandbox="prod")
+    crm_rows = [r for r in rows if r["connection"] == "CRM Connection"]
+    assert len(crm_rows) == 1
+    assert crm_rows[0]["dataset"] == "CRM Customer Batch"
+    assert crm_rows[0]["dataview"] == ""
+    assert crm_rows[0]["project"] == ""
+
+
+def test_fetch_cja_dataset_lineage_flags_a_dataset_id_it_cant_resolve(monkeypatch):
+    """A connection's dataset_ids can reference a dataset from a different
+    sandbox than the one being viewed (Datasets are sandbox-scoped, CJA
+    Connections are org-wide) — that must show up flagged as unresolved,
+    not silently as a bare id or dropped."""
+    web_mobile = dict(mock_module.MOCK_CONNECTIONS[0])
+    web_mobile["dataSets"] = [{"dataSetId": "not-a-real-dataset-id", "domain": "catalog", "type": "event", "name": "Ghost Dataset"}]
+    patched_connections = [web_mobile, mock_module.MOCK_CONNECTIONS[1]]
+    monkeypatch.setattr(mock_module, "MOCK_CONNECTIONS", patched_connections)
+
+    rows = data.fetch_cja_dataset_lineage(sandbox="prod")
+    matching = [r for r in rows if r["connection"] == "Web + Mobile Unified"]
+    assert matching  # sanity: the connection itself still resolved
+    assert all(r["dataset"] == "not-a-real-dataset-id (unresolved)" for r in matching)
