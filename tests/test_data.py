@@ -311,7 +311,13 @@ def test_fetch_property_datastream_edges_flags_an_unmapped_datastream(monkeypatc
     (flagged, dataset left blank) rather than being silently dropped."""
     monkeypatch.setattr(mock_module, "MOCK_EXTENSIONS", {
         **mock_module.MOCK_EXTENSIONS,
-        "PR1": [{"id": "EX1", "attributes": {"name": "Adobe Experience Platform Web SDK", "settings": '{"datastreamId": "not-in-the-map"}'}}],
+        "PR1": [{
+            "id": "EX1",
+            "attributes": {
+                "name": "adobe-alloy",
+                "settings": '{"instances": [{"name": "alloy", "edgeConfigId": "not-in-the-map"}]}',
+            },
+        }],
     })
     dc_rows = data.fetch_dc()
 

@@ -672,27 +672,41 @@ once per alert, not on every subsequent poll while it's still open.
   public `GET /properties/{id}/extensions` response — confirmed via
   Adobe's docs that the *list* response (not just the single-item GET)
   already includes each extension's full `settings` attribute, a
-  JSON-*encoded string* (not a nested object) sitting alongside many other
-  unrelated configuration keys. Detected by the presence of these setting
-  keys themselves, not by matching the Web SDK extension's exact package
-  name — Adobe's docs don't show a live example of that string, so keying
-  off settings it's uniquely known to carry is the more robust signal
-  (`clients/reactor.py`'s `_extract_datastream_ids()`).
+  JSON-*encoded string* (not a nested object).
 
-  Reported live, and easy to miss: a single property can configure a
+  **Confirmed live against a real tenant's raw extension response** (not
+  a guess, and it caught a real bug — two earlier versions of this
+  extraction both looked at the wrong nesting level entirely and silently
+  found nothing, on every property, always): the datastream ids are
+  **not** top-level keys on `settings` — they live inside
+  `settings["instances"]`, a *list* of named Web SDK instance configs
+  (`clients/reactor.py`'s `_extract_datastream_ids()`; the extension
+  supports configuring more than one instance, though the confirmed-live
+  common case is exactly one, named `"alloy"`). The extension's own
+  Reactor `name` is confirmed live to be `"adobe-alloy"`, for what it's
+  worth — this extraction still doesn't key off it, since a setting name
+  it's uniquely known to carry remains the more robust signal (Adobe's
+  docs don't show a live example of that string to match against, and a
+  future extension version could rename the package without renaming its
+  settings).
+
+  Also confirmed live, and easy to miss: a single instance configures a
   genuinely **different datastream per build environment** — production,
   staging, and development each get their own id, not just one flat
-  value. `datastreamId`/`edgeConfigId` (`edgeConfigId` confirmed-deprecated
-  in favor of `datastreamId`) covers production; separate flat keys cover
-  the other two, checked under both the older naming
-  (`stagingEdgeConfigId`/`developmentEdgeConfigId`, confirmed live) and the
-  newer `datastreamId`-style rename applied consistently
-  (`stagingDatastreamId`/`developmentDatastreamId`, not independently
-  confirmed for these two specifically). Every environment with a
-  configured id becomes its own row/node, labeled with that environment
-  (e.g. "Prod Web Datastream (production)") so two different real
-  datastreams on the same property are never conflated into one. The DC
-  page's Extensions tab shows every environment's raw id directly (and a
+  value, all inside that same instance object: `edgeConfigId` (production),
+  `stagingEdgeConfigId` (staging), `developmentEdgeConfigId` (development)
+  — confirmed live with exactly this naming. The newer `datastreamId`-style
+  rename Adobe's docs describe (`datastreamId`/`stagingDatastreamId`/
+  `developmentDatastreamId`) is checked first as a fallback in case a
+  different tenant/extension version has migrated to it, but no live
+  example of that has actually been seen — only the older names are
+  confirmed to exist. Every environment with a configured id becomes its
+  own row/node, labeled with that environment (e.g. "Prod Web Datastream
+  (production)") so two different real datastreams on the same property
+  are never conflated into one; multiple *instances* (rare) are
+  distinguished the same way, by instance name, only when more than one
+  is actually present. The DC page's Extensions tab shows every
+  environment's raw id directly (and a
   "Raw extension responses" expander) — the fastest way to check this
   extraction against what a live tenant's `settings` actually contains
   before assuming `datastream_map.json` itself is wrong.

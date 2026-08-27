@@ -6,6 +6,8 @@ row shapes the UI/database/alerts layers depend on. Every field-name
 fallback here exists because a real Adobe response was observed (or
 documented) to vary; these tests pin that behavior down."""
 
+import json
+
 from aep_monitor.clients import aep, audit, catalog, cja, observability, query_service, quota, reactor, schema_registry, segmentation, user_management
 
 
@@ -82,39 +84,68 @@ def test_parse_extension_flags_rejected_and_failed_as_issues_but_not_pending():
     assert approved["has_issue"] is False
 
 
-def test_parse_extension_extracts_the_production_datastream_id_from_the_json_encoded_settings_string():
-    """Confirmed via Adobe's docs: `settings` is a JSON-*encoded string*
-    even in the list response, not a nested object — and detected by the
-    setting key itself (not the extension's name), since Adobe's docs
-    don't show a live example of the Web SDK extension's exact name/
-    delegate_descriptor_id to match against."""
-    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": "{\"datastreamId\": \"abc-123\"}"}})
+def _web_sdk_settings(**instance_overrides: object) -> str:
+    """A minimal, confirmed-shape Web SDK settings string — datastream ids
+    live inside settings.instances[0], not at the top level (see
+    _extract_datastream_ids()'s docstring for how this was confirmed live)."""
+    return json.dumps({"instances": [{"name": "alloy", **instance_overrides}], "components": {"eventMerge": False}})
+
+
+def test_parse_extension_extracts_the_production_datastream_id_from_inside_instances():
+    """Confirmed live against a real tenant's raw extension response: the
+    datastream id is nested inside settings.instances[0], not a top-level
+    settings key — the original guess looked at the wrong nesting level
+    entirely and found nothing, ever, on any property."""
+    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": _web_sdk_settings(edgeConfigId="abc-123")}})
     assert ext["datastream_ids"] == {"production": "abc-123"}
 
 
-def test_parse_extension_falls_back_to_the_deprecated_edge_config_id_key():
-    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": "{\"edgeConfigId\": \"legacy-456\"}"}})
-    assert ext["datastream_ids"] == {"production": "legacy-456"}
+def test_parse_extension_extracts_the_newer_datastream_id_key_as_a_fallback():
+    """Not confirmed live (only edgeConfigId has been seen on a real
+    tenant), but checked first in case a different tenant/extension
+    version has migrated to Adobe's documented rename."""
+    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": _web_sdk_settings(datastreamId="new-456")}})
+    assert ext["datastream_ids"] == {"production": "new-456"}
 
 
 def test_parse_extension_extracts_staging_and_development_overrides_too():
-    """Reported live: a single property can configure a genuinely
-    *different* datastream per environment, not just one — both the
-    older flat-key naming (developmentEdgeConfigId) and the newer
-    datastreamId-style rename (stagingDatastreamId) are checked."""
+    """Confirmed live: a single property configures a genuinely different
+    datastream per environment via edgeConfigId/stagingEdgeConfigId/
+    developmentEdgeConfigId, all inside the same instance object."""
     ext = reactor.parse_extension({
         "id": "e1",
-        "attributes": {"settings": (
-            "{\"datastreamId\": \"prod-1\", \"stagingDatastreamId\": \"staging-1\", "
-            "\"developmentEdgeConfigId\": \"dev-1\"}"
+        "attributes": {"settings": _web_sdk_settings(
+            edgeConfigId="prod-1", stagingEdgeConfigId="staging-1", developmentEdgeConfigId="dev-1",
         )},
     })
     assert ext["datastream_ids"] == {"production": "prod-1", "staging": "staging-1", "development": "dev-1"}
 
 
+def test_parse_extension_suffixes_environment_keys_when_multiple_instances_exist():
+    """Rare (the confirmed-live example has exactly one instance), but the
+    Web SDK extension does support configuring more than one — merged
+    into one result, distinguished by instance name only when there's
+    more than one to distinguish."""
+    settings = json.dumps({"instances": [
+        {"name": "alloy", "edgeConfigId": "prod-main"},
+        {"name": "alloy2", "edgeConfigId": "prod-secondary"},
+    ]})
+    ext = reactor.parse_extension({"id": "e1", "attributes": {"settings": settings}})
+    assert ext["datastream_ids"] == {"production (alloy)": "prod-main", "production (alloy2)": "prod-secondary"}
+
+
 def test_parse_extension_datastream_ids_is_empty_for_a_non_web_sdk_extension():
     ext = reactor.parse_extension({"id": "e1", "attributes": {"name": "Core"}})
     assert ext["datastream_ids"] == {}
+
+
+def test_parse_extension_datastream_ids_is_empty_when_settings_has_no_instances_list():
+    """A non-Web-SDK extension's settings (e.g. "{}", or some other
+    extension's own config) has no "instances" key at all — must degrade
+    to empty, not crash trying to iterate a missing/wrong-typed value."""
+    assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "{}"}})["datastream_ids"] == {}
+    assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "{\"dataLayerName\": \"adobeDataLayer\"}"}})["datastream_ids"] == {}
+    assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "{\"instances\": \"not-a-list\"}"}})["datastream_ids"] == {}
 
 
 def test_parse_extension_does_not_crash_on_malformed_settings():

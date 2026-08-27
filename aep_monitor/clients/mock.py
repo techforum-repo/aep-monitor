@@ -99,24 +99,28 @@ MOCK_PROPERTIES: list[dict[str, Any]] = [
 
 MOCK_EXTENSIONS: dict[str, list[dict[str, Any]]] = {
     "PR1": [
-        # "settings" is a JSON-*encoded string* here, not a nested object —
-        # confirmed via Adobe's own docs example response shape (see
-        # clients/reactor.py's _extract_datastream_ids() docstring).
-        # Reported live: a property configures a *different* datastream per
-        # environment, not just one — production's id matches
-        # datastream_map.sample.json's first entry (-> "Loyalty Events"),
-        # staging matches its second entry (-> "Web SDK Events"), and
-        # development is deliberately left unmapped to also demonstrate
+        # "settings" is a JSON-*encoded string* here, not a nested object,
+        # AND the datastream ids live inside settings.instances[0], not at
+        # the top level — confirmed live against a real tenant's raw
+        # extension response (see clients/reactor.py's
+        # _extract_datastream_ids() docstring); the original mock data
+        # guessed a flat top-level shape, which is exactly why it never
+        # caught the live bug this nested shape now pins down. Production's
+        # id matches datastream_map.sample.json's first entry (-> "Loyalty
+        # Events"), staging matches its second entry (-> "Web SDK Events"),
+        # and development is deliberately left unmapped to also demonstrate
         # that case out of the box, same as every other mock-first feature.
         {
             "id": "EX1",
             "attributes": {
-                "name": "Adobe Experience Platform Web SDK", "published": True, "review_status": "approved",
+                "name": "adobe-alloy", "display_name": "Adobe Experience Platform Web SDK",
+                "published": True, "review_status": "approved",
                 "settings": (
-                    "{\"datastreamId\": \"00000000-0000-0000-0000-000000000000\", "
-                    "\"stagingDatastreamId\": \"11111111-1111-1111-1111-111111111111\", "
-                    "\"developmentEdgeConfigId\": \"33333333-3333-3333-3333-333333333333\", "
-                    "\"edgeDomain\": \"edge.acmecorp.com\"}"
+                    "{\"instances\":[{\"name\":\"alloy\",\"sandbox\":\"prod\",\"edgeDomain\":\"edge.acmecorp.com\","
+                    "\"edgeConfigId\":\"00000000-0000-0000-0000-000000000000\","
+                    "\"stagingEdgeConfigId\":\"11111111-1111-1111-1111-111111111111\","
+                    "\"developmentEdgeConfigId\":\"33333333-3333-3333-3333-333333333333\"}],"
+                    "\"components\":{\"eventMerge\":false}}"
                 ),
             },
         },

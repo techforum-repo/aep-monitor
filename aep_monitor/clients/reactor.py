@@ -106,32 +106,42 @@ def _extract_datastream_ids(attrs: dict[str, Any]) -> dict[str, str]:
     attribute, so no extra per-extension call is needed to get it.
 
     `settings` is a JSON-*encoded string* per Adobe's own example response
-    (`"settings": "{...}"`), not a nested object, sitting alongside many
-    other unrelated configuration keys — parsed defensively here since a
-    malformed value shouldn't crash the whole property fetch, and every
-    other key is simply ignored.
+    (`"settings": "{...}"`), not a nested object — parsed defensively here
+    since a malformed value shouldn't crash the whole property fetch.
 
-    Reported live, not something Adobe's own docs describe in one place: a
-    single property can configure a genuinely *different* datastream per
-    build environment — `datastreamId`/`edgeConfigId` for production
-    (`edgeConfigId` confirmed-deprecated in favor of `datastreamId`), plus
-    separate flat keys for staging/development. Both the older
-    `stagingEdgeConfigId`/`developmentEdgeConfigId` naming (confirmed live)
-    and the newer `datastreamId`-style rename applied consistently
-    (`stagingDatastreamId`/`developmentDatastreamId`) are checked, since
-    which one a given tenant's extension version actually uses isn't
-    confirmed either way — this app has not seen a live example
-    confirming the newer names exist for staging/development specifically,
-    only that the pattern of the rename holds for the production key.
+    Confirmed live (a real tenant's raw extension response, not a guess):
+    the datastream ids are **not** top-level keys on `settings` at all —
+    they sit inside `settings["instances"]`, a *list* of named Web SDK
+    instance configs (the extension supports configuring more than one;
+    the common case, confirmed live, is exactly one named `"alloy"`). The
+    two earlier versions of this function both looked at the wrong nesting
+    level entirely and silently found nothing on every property, always —
+    a real live bug, not a shape mismatch that degraded gracefully.
+
+    Also confirmed live: this tenant's exact key names are `edgeConfigId`
+    (production), `stagingEdgeConfigId` (staging), and
+    `developmentEdgeConfigId` (development) — the older, flat naming.
+    `datastreamId`/`stagingDatastreamId`/`developmentDatastreamId` (the
+    newer rename Adobe's own docs describe replacing `edgeConfigId` with)
+    are checked first as a fallback in case a different tenant/extension
+    version has actually migrated to them, but no live example of that has
+    been seen — only the older names have been confirmed to exist.
+
+    Multiple instances (rare) are merged into one result; an environment
+    key is suffixed with `" ({instance name})"` only when more than one
+    instance is actually present, so the common single-instance case keeps
+    plain `"production"`/`"staging"`/`"development"` keys. Only
+    environments with a non-empty value are included — an environment
+    with no override configured is absent from the result entirely, not
+    an empty-string entry.
 
     Detected by the presence of these setting keys themselves, not by
     matching the Web SDK extension's own package name/delegate_descriptor_id
-    — Adobe's own docs don't show a live example of that exact string for
-    this specific extension, so keying off a setting name it's uniquely
-    known to carry is the more robust signal here, not a guess this app
-    can't verify. Only environments with a non-empty value are included —
-    an environment with no override configured is absent from the result,
-    not an empty-string entry."""
+    (confirmed live to be `"adobe-alloy"` /
+    `"adobe-alloy::extensionConfiguration::config"`, for what it's worth,
+    though this function still doesn't key off it — a setting name it's
+    uniquely known to carry remains the more robust signal, in case a
+    future extension version renames the package but not its settings)."""
     settings_raw = attrs.get("settings")
     if isinstance(settings_raw, str):
         try:
@@ -145,16 +155,24 @@ def _extract_datastream_ids(attrs: dict[str, Any]) -> dict[str, str]:
     if not isinstance(settings_obj, dict):
         return {}
 
+    instances = settings_obj.get("instances")
+    if not isinstance(instances, list):
+        return {}
+    instances = [i for i in instances if isinstance(i, dict)]
+    multiple = len(instances) > 1
+
     result: dict[str, str] = {}
-    production_id = settings_obj.get("datastreamId") or settings_obj.get("edgeConfigId")
-    if production_id:
-        result["production"] = str(production_id)
-    staging_id = settings_obj.get("stagingDatastreamId") or settings_obj.get("stagingEdgeConfigId")
-    if staging_id:
-        result["staging"] = str(staging_id)
-    development_id = settings_obj.get("developmentDatastreamId") or settings_obj.get("developmentEdgeConfigId")
-    if development_id:
-        result["development"] = str(development_id)
+    for instance in instances:
+        suffix = f" ({instance['name']})" if multiple and instance.get("name") else ""
+        production_id = instance.get("edgeConfigId") or instance.get("datastreamId")
+        if production_id:
+            result[f"production{suffix}"] = str(production_id)
+        staging_id = instance.get("stagingEdgeConfigId") or instance.get("stagingDatastreamId")
+        if staging_id:
+            result[f"staging{suffix}"] = str(staging_id)
+        development_id = instance.get("developmentEdgeConfigId") or instance.get("developmentDatastreamId")
+        if development_id:
+            result[f"development{suffix}"] = str(development_id)
     return result
 
 
