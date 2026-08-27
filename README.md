@@ -16,7 +16,7 @@ provisioning to cross-product monitoring.
 
 | Page | API | Signal |
 |---|---|---|
-| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow (AEP Dataset → CJA Connection → Data View → Project) with Data Collection properties listed alongside, explicitly not wired into it |
+| **Overview** | all of the below | One screen: open-alert banner, a summary card per product, a data-lifecycle quota breakdown, and an end-to-end data flow (XDM Schema → AEP Dataset → CJA Connection → Data View → Project, one connection at a time) with Data Collection properties listed alongside, explicitly not wired into it |
 | **AEP Ingestion** | Flow Service | Per-dataflow run status, record volume, failed records, history trend — plus a **Connector** column resolving each flow's `flowSpec` to a display name, since `/flows` returns inbound ingestion and outbound activation flows undifferentiated (see Known Limitations) |
 | **AEP Ingestion** (org-wide section) | Observability Insights | Adobe's own sandbox-wide historical metrics — independent of, and richer than, this app's own per-flow polling |
 | **Datasets** | Catalog Service | Dataset metadata, the schema each dataset is bound to, Profile/Identity enablement — follows the sandbox switcher |
@@ -642,24 +642,49 @@ once per alert, not on every subsequent poll while it's still open.
   Administrator. The CJA and SDR pages show this same explanation in-app
   when Connections comes back empty.
 - **Overview's end-to-end data flow** (`fetch_cja_dataset_lineage()` in
-  `data.py`, `_build_lineage_sankey()` in `ui/overview.py`) charts AEP
-  Dataset → CJA Connection → Data View → Project using the one genuinely
-  confirmed cross-product link this app has found: a CJA connection's own
+  `data.py`, `_build_lineage_sankey()` in `ui/overview.py`) charts XDM
+  Schema → AEP Dataset → CJA Connection → Data View → Project — every hop
+  a genuinely confirmed cross-product link: a dataset's own schema binding
+  (already used on the Datasets page/Compare), and a CJA connection's own
   `dataSets` field (`expansion=dataSets`, confirmed via Adobe's docs —
   `{dataSetId, domain, type, timestampId, visitorId, identityNamespace,
   usePrimaryIdNamespace, identityMap, name, streaming}` per entry).
   Data Collection properties/rules/data elements are listed separately
   underneath, deliberately **not** wired into this flow — there is no
-  public API for Datastream configuration (which property's Web SDK
-  datastream sends to which dataset), confirmed absent when this app's
-  DataStreams support was researched, so that link can't be discovered
-  programmatically; only whoever configured it knows the actual mapping.
-  A dataset id a connection references but this sandbox's own dataset
-  list can't resolve (a real possibility — Datasets are sandbox-scoped,
-  Connections are org-wide, so a connection can reference a dataset from
-  a *different* sandbox than the one currently active) shows up flagged
-  `"<id> (unresolved)"` in the chart rather than a bare id or a silently
-  dropped node.
+  official, documented API for Datastream configuration (which property's
+  Web SDK datastream sends to which dataset). Confirmed, not just assumed:
+  Adobe's own community forum has staff confirming an internal API exists
+  at `edge.adobe.io` ("DataStreams" were originally called "EdgeConfigs")
+  but explicitly *not* publicly documented or supported — "not really a
+  public API in the sense that it has not been made publicly aware nor
+  does it come with any up-to-date documentation." Building against it
+  would be a different risk category from every other integration in this
+  app (all built against Adobe's actual published docs), so it's left out
+  rather than reverse-engineered from network traffic.
+
+  The chart is always scoped to one connection at a time via a **"Focus on
+  connection"** picker — an unfiltered, all-connections view was tried
+  first, but at real-org scale (dozens of connections/projects) it's
+  reliably too dense to read no matter how much the rendering is tuned, so
+  the option was removed rather than merely defaulted away from. That
+  picker is itself filtered to connections with at least one dataset
+  resolving in the *currently active sandbox* — an **inference**, not
+  something Adobe's API states directly (Connections are org-wide and
+  carry no sandbox field of their own to check), with a "Show connections
+  with no resolved data in this sandbox too" checkbox as an explicit
+  opt-out so a connection is never silently unreachable, only filtered by
+  default. A dataset id a connection references but the active sandbox's
+  own dataset list can't resolve (a real possibility — Datasets are
+  sandbox-scoped, Connections are org-wide, so a connection can reference
+  a dataset from a different sandbox) collapses into one shared
+  "Unresolved dataset" node rather than one node per raw id — reported
+  live that a real org's permission/sandbox gaps can produce dozens of
+  them, and a wall of long, near-identical GUID labels was unreadable; the
+  specific raw ids are still listed in a caption under the chart. Chart
+  height scales with whichever stage has the most distinct nodes (not a
+  fixed size) for the same reason, and a color-coded legend plus
+  stage-prefixed hover text on every node ("Schema: X") make the five
+  stage colors identifiable without memorizing them.
 - **SDR page** (`aep_monitor/clients/cja.py`'s dimensions/metrics
   endpoints, `aep_monitor/clients/schema_registry.py`) is the newest,
   least-exercised integration in this app — same caveat as Audit Query.

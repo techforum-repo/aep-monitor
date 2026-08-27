@@ -88,6 +88,32 @@ def test_overview_lineage_names_the_cja_permission_gap_when_connections_are_empt
     assert "product-administration" in info_text or "product administration" in info_text
 
 
+def test_overview_lineage_filters_connections_by_sandbox_relevance_with_an_opt_out(monkeypatch):
+    """A connection whose dataset ids don't resolve in the active sandbox
+    is hidden by default from "Focus on connection" — very likely means
+    its real data lives in a different sandbox (connections are org-wide
+    and have no sandbox of their own to check directly, so this is an
+    inference, not a fact Adobe's API states). Never silently unreachable
+    though: the "Show connections..." checkbox reveals it."""
+    from aep_monitor.clients import mock as mock_module
+    crm = dict(mock_module.MOCK_CONNECTIONS[1])  # CRM Connection — normally resolves fine
+    crm["dataSets"] = [{"dataSetId": "not-a-real-dataset-id", "domain": "catalog", "type": "event", "name": "Ghost Dataset"}]
+    monkeypatch.setattr(mock_module, "MOCK_CONNECTIONS", [mock_module.MOCK_CONNECTIONS[0], crm])
+
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    assert at.exception == []
+
+    focus = at.selectbox(key="overview_lineage_focus")
+    assert "CRM Connection" not in focus.options
+    assert "Web + Mobile Unified" in focus.options
+
+    at.checkbox(key="overview_lineage_show_all_connections").set_value(True).run()
+    assert at.exception == []
+    focus = at.selectbox(key="overview_lineage_focus")
+    assert "CRM Connection" in focus.options
+
+
 def test_sdr_page_loads_dataview_components_and_schema_fields_on_selection():
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()

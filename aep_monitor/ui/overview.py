@@ -347,10 +347,38 @@ def _render_lineage() -> None:
             # the legible choice, just a tempting way to land back on the
             # crushed view it exists to get away from, so it's removed
             # rather than merely defaulted-away-from.
-            connection_names = sorted({row["connection"] for row in rows if row["connection"]})
+            all_connection_names = sorted({row["connection"] for row in rows if row["connection"]})
+            # Connections have no sandbox field at all (they're org-wide,
+            # confirmed via Adobe's docs — see README) — there's no direct
+            # way to ask Adobe "which connections belong to this sandbox."
+            # This infers it instead: a connection counts as relevant to
+            # the active sandbox if at least one of its datasets actually
+            # resolved there. A connection with literally no configured
+            # dataset_ids has nothing to mismatch on either way and always
+            # counts as relevant, rather than being penalized for having
+            # nothing to check.
+            sandbox_relevant_names = [
+                name for name in all_connection_names
+                if any(r["dataset"] == "—" or not r["dataset"].endswith("(unresolved)") for r in rows if r["connection"] == name)
+            ]
+            show_all = st.checkbox(
+                "Show connections with no resolved data in this sandbox too", key="overview_lineage_show_all_connections",
+                help="Off by default: a connection's datasets not resolving here usually just means its real data lives in a different sandbox.",
+            )
+            # Never silently strand the viewer with an empty picker — if
+            # every connection happens to mismatch this sandbox, fall back
+            # to the full list rather than rendering a selectbox with
+            # nothing in it.
+            connection_names = all_connection_names if (show_all or not sandbox_relevant_names) else sandbox_relevant_names
             focus = st.selectbox(
                 "Focus on connection", connection_names, key="overview_lineage_focus",
                 help="Scoped to one connection's own pipeline — a real org's full, unfiltered graph is reliably too dense to read at once.",
+            )
+            st.caption(
+                f"Filtered to connections with at least one dataset resolving in sandbox **{get_active_sandbox()}** "
+                "(the sidebar's AEP sandbox switcher) — an inference, not something Adobe's API states directly, "
+                "since connections themselves are org-wide and carry no sandbox of their own. Switch the sidebar "
+                "sandbox, not this picker, if a connection you expect to see is missing."
             )
             visible_rows = [r for r in rows if r["connection"] == focus]
             _render_lineage_legend()
@@ -360,7 +388,9 @@ def _render_lineage() -> None:
             if unresolved_ids:
                 st.caption(
                     f"{len(unresolved_ids)} dataset id(s) shown above as one \"Unresolved dataset\" node — "
-                    "raw ids: " + ", ".join(unresolved_ids[:10]) + (f", and {len(unresolved_ids) - 10} more" if len(unresolved_ids) > 10 else "")
+                    "raw ids: " + ", ".join(unresolved_ids[:10]) + (f", and {len(unresolved_ids) - 10} more" if len(unresolved_ids) > 10 else "") + ". "
+                    f"Try a different **sidebar** AEP sandbox (currently **{get_active_sandbox()}**) if you expect these to resolve — "
+                    "a connection's dataset ids aren't guaranteed to live in the same sandbox as the one currently selected."
                 )
 
     st.markdown("###### Data Collection properties (not linked above)")
