@@ -464,6 +464,103 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
     return rows
 
 
+def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str | None = None) -> list[dict[str, Any]]:
+    """{property, domains, environment, datastream_id, datastream, dataset,
+    mapped, mapped_dataset_id, rule_name} rows — same shape
+    fetch_property_datastream_edges() produces (a caller can just append
+    this onto that function's own result and feed both to the same
+    lineage chart / debug table with zero changes to either), but closing
+    a *different* gap: one rule's own action can override a property's
+    default Web SDK datastream for just the events matching that rule
+    (Adobe's "Send event" action — see reactor.py's
+    _extract_rule_datastream_override()), which
+    fetch_property_datastream_edges() can never see since it only ever
+    reads the extension's own default `instances[]` settings. Reported
+    live as the actual symptom this closes: a datastream used *only*
+    through a rule override (never as any extension's default) still
+    resolves a name/dataset via datastream_map.json, but had nowhere to
+    attach to — it fell into that function's "(no property)" fallback
+    despite genuinely belonging to a property, just reachable through one
+    specific rule rather than the property's own default config.
+
+    Deliberately NOT part of fetch_dc()/refresh_all() — walking every
+    rule's own /rule_components is a real N (property) × M (rule) amount
+    of extra Reactor calls on top of the six-leg walk those already do,
+    for a fact that's rare by construction (most rules carry no
+    datastream override at all). Meant to be called on demand only (see
+    Overview's "Search rules for datastream overrides" button), against
+    `dc_rows` already sitting in session state — no extra property/rule
+    fetch of its own, just the one additional hop each rule those
+    properties already carry gets walked once. A rule component with no
+    override contributes nothing to the result at all — this never
+    surfaces "every rule on every property," only the ones that actually
+    do the thing being searched for.
+
+    `environment` is set to `f"via rule: {rule name}"` rather than an
+    actual build environment — a rule-level override has no notion of
+    production/staging/development the way an extension's own instance
+    config does (a rule fires wherever it's built into, not per named
+    instance) — which is also what makes this show up distinguishably
+    from a property's default datastream edge in both the lineage
+    diagram and the debug table: both already just display whatever
+    string sits in `environment` verbatim as part of the datastream's own
+    label, so nothing about either needs to change to support this.
+
+    Dataset resolution is against whichever `sandbox` is passed in only —
+    same single-sandbox scoping fetch_property_datastream_edges() already
+    has, and the same known gap: a rule component carries no sandbox
+    field of its own at all (sandbox lives on the *datastream*, not on
+    the Launch rule config), so an override pointing at a datastream
+    provisioned in a different sandbox than the one currently active
+    resolves as unmapped/unresolved here rather than guessed at.
+    Switching the sidebar sandbox and re-running the search is the
+    intended fix, same as every other single-sandbox gap in this file."""
+    datastream_map = load_datastream_map()
+    dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
+
+    if settings.mock_mode:
+        raw_triples = [
+            (prop, rule, comp)
+            for prop in dc_rows
+            for rule in prop.get("rules", [])
+            for comp in mock.MOCK_RULE_COMPONENTS.get(rule["rule_id"], [])
+        ]
+    else:
+        async def _load():
+            triples = []
+            async with reactor_client._new_http_client() as http:  # noqa: SLF001
+                for prop in dc_rows:
+                    for rule in prop.get("rules", []):
+                        components = await reactor_client.list_rule_components(http, prop["property_id"], rule["rule_id"])
+                        for comp in components:
+                            triples.append((prop, rule, comp))
+            return triples
+        raw_triples = run_async(_load())
+
+    rows: list[dict[str, Any]] = []
+    for prop, rule, comp in raw_triples:
+        parsed = reactor_api.parse_rule_component(comp, rule["rule_id"], rule["name"])
+        datastream_id = parsed["datastream_override_id"]
+        if not datastream_id:
+            continue  # the overwhelming majority — not an override at all, dropped rather than kept
+        mapped_entry = datastream_map.get(datastream_id)
+        mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
+        environment = f"via rule: {rule['name']}"
+        if mapped_entry:
+            datastream_label = f"{mapped_entry['name'] or datastream_id} ({environment})"
+            dataset_label = dataset_names.get(mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "")
+        else:
+            datastream_label = f"{datastream_id} (unmapped, {environment})"
+            dataset_label = ""
+        rows.append({
+            "property": prop["property_name"], "domains": list(prop.get("domains") or []),
+            "environment": environment, "datastream_id": datastream_id,
+            "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
+            "mapped_dataset_id": mapped_dataset_id, "rule_name": rule["name"],
+        })
+    return rows
+
+
 _NON_COMPONENT_ENTITY_TYPES = {"ReportSuite", "DateRange"}
 
 

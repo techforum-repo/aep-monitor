@@ -175,6 +175,42 @@ def test_overview_lineage_renders_without_exception_when_focused_on_a_connection
     assert debug_table[debug_table["Property"] == "acme.com — Web"]["Website domain(s)"].iloc[0] == "www.acmecorp.com, shop.acmecorp.com"
 
 
+def test_overview_rule_datastream_override_search_finds_and_merges_the_mock_override():
+    """The "Rule-based datastream overrides" expander is off by default
+    (not searched yet) and, once the button is clicked, finds mock's one
+    override (RL4 on PR1) and merges it into the same debug table the
+    property-level extraction already populates — reported live as
+    "a Sensitive datastream isn't connected to any tag, but a tag rule
+    overrides it to Sensitive; can we identify which rule and connect it
+    through that rule?"."""
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    assert at.exception == []
+    assert any("Not searched yet in this sandbox" in c.value for c in at.caption)
+
+    # Before the search: the mock "Sensitive" datastream resolves via
+    # datastream_map.sample.json but has no property behind it in the
+    # debug table at all — the exact symptom this feature closes.
+    debug_table = next(df.value for df in at.get("dataframe") if "In map file?" in df.value.columns)
+    sensitive_before = debug_table[debug_table["Datastream ID (extracted)"] == "66666666-6666-6666-6666-666666666666"]
+    assert sensitive_before.iloc[0]["Property"] == "—"
+
+    at.button(key="overview_search_rule_overrides").click().run()
+    assert at.exception == []
+
+    override_table = next(df.value for df in at.get("dataframe") if "Rule" in df.value.columns and "Datastream" in df.value.columns)
+    assert override_table.iloc[0]["Rule"] == "Sensitive Page — Route to Restricted Stream"
+    assert override_table.iloc[0]["Property"] == "acme.com — Web"
+    assert override_table.iloc[0]["Resolved dataset"] == "Web Events — Sensitive (Restricted)"
+
+    # Merged into the same unfiltered debug table too — now attached to
+    # its property, via the rule, instead of showing "—".
+    debug_table = next(df.value for df in at.get("dataframe") if "In map file?" in df.value.columns)
+    sensitive_after = debug_table[debug_table["Datastream ID (extracted)"] == "66666666-6666-6666-6666-666666666666"]
+    assert sensitive_after.iloc[0]["Property"] == "acme.com — Web"
+    assert "via rule: Sensitive Page — Route to Restricted Stream" in sensitive_after.iloc[0]["Environment"]
+
+
 def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch):
     """Regression, reported live: "Refresh everything" never actually
     recomputed the lineage chart or property_datastream_edges at all —
@@ -486,7 +522,7 @@ def test_datasets_page_shows_profile_and_identity_columns():
     assert len(tables) == 1
     assert "Profile-enabled" in tables[0].columns
     assert "Identity-enabled" in tables[0].columns
-    assert len(tables[0]) == 4  # 4 datasets in mock data (the 4th, Mobile App Events, isn't part of any CJA connection)
+    assert len(tables[0]) == 5  # 5 datasets in mock data (Mobile App Events and the Sensitive one aren't part of any CJA connection)
 
 
 def test_datasets_page_shows_schema_titles_not_raw_ids():

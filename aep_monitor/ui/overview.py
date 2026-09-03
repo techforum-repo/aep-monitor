@@ -213,10 +213,62 @@ def _do_refresh_lineage() -> None:
         st.session_state["property_datastream_edges"] = data.fetch_property_datastream_edges(
             st.session_state.dc_rows or [], sandbox=active_sandbox,
         )
+        # Not re-run automatically — see fetch_rule_datastream_overrides()'s
+        # own "deliberately not part of refresh_all()" docstring for the
+        # per-property × per-rule API cost — but a stale result computed
+        # against a *different* sandbox would silently misreport whether
+        # each override resolves (dataset resolution is single-sandbox
+        # scoped, same gap as property_datastream_edges above), so it's
+        # cleared back to "not searched yet" here rather than left showing
+        # last sandbox's answer under this one's label.
+        st.session_state["rule_datastream_override_edges"] = None
         mark_cache_sandbox("lineage_rows", active_sandbox)
         st.session_state["_lineage_error"] = None
     except Exception as exc:
         st.session_state["_lineage_error"] = exc
+
+
+def _render_rule_datastream_overrides() -> None:
+    """A rule's own action (e.g. Web SDK's "Send event") can override a
+    property's *default* datastream for just the events matching that
+    rule — invisible to the Property → Datastream extraction above, which
+    only ever reads the extension's own default settings (see
+    data.fetch_rule_datastream_overrides()'s docstring for the full
+    story). Not run automatically: a real N properties × M rules amount
+    of extra Reactor calls, for a fact that's rare by construction — run
+    only on request, typically to explain one specific datastream/dataset
+    that stays unconnected above despite a real datastream_map.json entry
+    for it."""
+    dc_rows = st.session_state.dc_rows or []
+    with st.expander("Rule-based datastream overrides", expanded=False):
+        st.caption(
+            "Searches every rule on every Data Collection property for an action that overrides the property's "
+            "default datastream (not run automatically — see the button below). A match is merged into the "
+            "diagram and debug table above as one more Property → Datastream edge, labeled with the rule that "
+            "sets it, distinct from the property's own default datastream."
+        )
+        if st.button("Search rules for datastream overrides", key="overview_search_rule_overrides", disabled=not dc_rows):
+            with st.spinner("Checking every rule's own actions for a datastream override..."):
+                st.session_state["rule_datastream_override_edges"] = data.fetch_rule_datastream_overrides(
+                    dc_rows, sandbox=get_active_sandbox(),
+                )
+        override_edges = st.session_state.get("rule_datastream_override_edges")
+        if override_edges is None:
+            st.caption("Not searched yet in this sandbox.")
+        elif not override_edges:
+            st.caption("No rule found overriding a datastream, across every rule on every property.")
+        else:
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Rule": e["rule_name"], "Property": e["property"] or "—",
+                        "Datastream": e["datastream"], "Datastream ID (extracted)": e["datastream_id"],
+                        "Resolved dataset": e["dataset"] or "(unmapped, or provisioned in a different sandbox)",
+                    }
+                    for e in override_edges
+                ]),
+                use_container_width=True, hide_index=True, key="overview_rule_override_table",
+            )
 
 
 # One fixed color per pipeline stage, applied to every node at that stage —
@@ -582,6 +634,19 @@ def _render_lineage() -> None:
             )
             visible_rows = [r for r in rows if r["connection"] == focus]
             property_edges = st.session_state.get("property_datastream_edges") or []
+            _render_rule_datastream_overrides()
+            override_edges = st.session_state.get("rule_datastream_override_edges") or []
+            # A datastream found via a rule override is, by construction,
+            # also sitting in property_edges' own "(no property)" fallback
+            # (fetch_property_datastream_edges() has no way to know a rule
+            # explains it) — drop that now-explained duplicate rather than
+            # showing the same datastream twice, once orphaned and once
+            # correctly attached; same one-row-per-fact principle
+            # fetch_property_datastream_edges() itself already applies
+            # between its own property walk and orphan pass (see its
+            # docstring's "orphan mapping is not duplicated" case).
+            overridden_ids = {e["datastream_id"] for e in override_edges}
+            property_edges = [e for e in property_edges if not (e["property"] == "" and e["datastream_id"] in overridden_ids)] + override_edges
             relevant_edges = _relevant_property_edges(property_edges, visible_rows)
 
             show_path_counts = st.checkbox(

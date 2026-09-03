@@ -77,6 +77,7 @@ def test_flowchart_collapses_repeated_edges_into_one_labeled_edge():
     # The two rows diverge at Project — two separate, unlabeled (count-1) edges out of the Data View node.
     weekly, deep_dive = _node_id(dot, "Weekly Report"), _node_id(dot, "Deep Dive")
     assert _edge_label(dot, dv, weekly) is None
+    assert _edge_label(dot, dv, deep_dive) is None
 
 
 def test_show_path_counts_false_keeps_one_edge_but_drops_the_label():

@@ -196,9 +196,46 @@ MOCK_RULES: dict[str, list[dict[str, Any]]] = {
     "PR1": [
         {"id": "RL1", "attributes": {"name": "Page View — All Pages", "enabled": True, "published": True}},
         {"id": "RL2", "attributes": {"name": "Checkout Complete", "enabled": True, "published": True}},
+        # Demonstrates data.fetch_rule_datastream_overrides(): a rule
+        # whose own "Send event" action overrides the property's default
+        # datastream (EX1's edgeConfigId above) to a genuinely different
+        # one, matching datastream_map.sample.json's sixth entry (->
+        # "Sensitive Web Datastream (Restricted)") — a datastream no
+        # extension on this property ever names as a default, so
+        # fetch_property_datastream_edges() alone leaves it in the
+        # "(no property)" bucket despite it genuinely belonging to PR1,
+        # reachable only through this one rule. See MOCK_RULE_COMPONENTS.
+        {"id": "RL4", "attributes": {"name": "Sensitive Page — Route to Restricted Stream", "enabled": True, "published": True}},
     ],
     "PR2": [
         {"id": "RL3", "attributes": {"name": "App Launch", "enabled": True, "published": True}},
+    ],
+}
+
+# Keyed by rule id (Reactor's /rule_components endpoint is already scoped
+# to one rule, so there's no property-id collision to worry about — see
+# clients/reactor.py's list_rule_components()). Every rule not listed here
+# implicitly has no components (data.fetch_rule_datastream_overrides()
+# treats a missing key the same as an empty list) — only RL4 is given one,
+# and it's deliberately the *only* mock rule component that carries a
+# datastream override, so the "only rules that actually override
+# something get surfaced" behavior has a real single-match case to prove
+# rather than every rule trivially matching.
+MOCK_RULE_COMPONENTS: dict[str, list[dict[str, Any]]] = {
+    "RL4": [
+        {
+            "id": "RC1",
+            "attributes": {
+                "name": "Send event — override to restricted datastream",
+                # Guessed at Adobe's own naming convention for the Web
+                # SDK's "Send event" action delegate id (mirrors the
+                # confirmed extension package name "adobe-alloy" — see
+                # parse_extension()) — not confirmed live, same caveat as
+                # _extract_rule_datastream_override()'s settings-key list.
+                "delegate_descriptor_id": "adobe-alloy::actions::send-event",
+                "settings": "{\"datastreamIdOverride\":\"66666666-6666-6666-6666-666666666666\"}",
+            },
+        },
     ],
 }
 
@@ -521,6 +558,20 @@ MOCK_DATASETS: dict[str, dict[str, Any]] = {
         "schemaRef": {"id": "https://ns.adobe.com/acmecorp/schemas/mobile-events", "contentType": "application/vnd.adobe.xed+json"},
         "tags": {"unifiedProfile": ["enabled:true"], "unifiedIdentity": ["enabled:true"]},
         "created": _iso(60 * 24 * 15), "updated": _iso(30),
+    },
+    # Fed only via PR1's RL4 rule component override (MOCK_RULE_COMPONENTS)
+    # — no extension ever names this datastream as a default, so it has no
+    # row from fetch_property_datastream_edges() at all, only from
+    # fetch_rule_datastream_overrides(). Matches datastream_map.sample.json's
+    # sixth entry. Deliberately its own dataset, not reused from one of the
+    # regular web/mobile ones above — realistic separation for a
+    # PII/consent-governed stream, not merged into general web events.
+    "9d5e6f7a8b9c0d1e2f3a4b5c": {
+        "name": "Web Events — Sensitive (Restricted)",
+        "description": "PII-flagged web events, routed here by one rule's datastream override rather than the property's default datastream",
+        "schemaRef": {"id": "https://ns.adobe.com/acmecorp/schemas/web-events-sensitive", "contentType": "application/vnd.adobe.xed+json"},
+        "tags": {"unifiedProfile": ["enabled:true"], "unifiedIdentity": ["enabled:true"]},
+        "created": _iso(60 * 24 * 10), "updated": _iso(15),
     },
 }
 

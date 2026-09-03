@@ -815,6 +815,38 @@ once per alert, not on every subsequent poll while it's still open.
   entry, "Legacy CRM Datastream," resolves to "CRM Customer Batch" with no
   mock property behind it at all.
 
+  A datastream can also land in that same "(no property)" bucket for a
+  reason that isn't actually a dead mapping at all: a rule's own action
+  (Web SDK's "Send event" carries its own optional datastream override)
+  can route just the events matching that rule to a genuinely different
+  datastream than the property's default — one no extension config ever
+  names, so `fetch_property_datastream_edges()` alone can never attach it
+  to a property, even though it's real and live. Reported live as
+  "Sensitive Data Stream not connected to any tag/site, but a tag rule
+  overrides the datastream to it — can we identify which rule and connect
+  it?" — the **"Rule-based datastream overrides"** expander under the
+  chart (`data.fetch_rule_datastream_overrides()`) closes it: an on-demand
+  search (not run on every refresh — a real N properties × M rules amount
+  of extra Reactor calls, for a fact that's rare by construction) over
+  every rule's own `/rule_components`, keeping only the ones that actually
+  carry a datastream override and merging each into the same edge list the
+  chart/debug table already read, labeled `via rule: <rule name>` in place
+  of a build environment (a rule-level override has no
+  production/staging/development notion of its own). The override key
+  itself (`datastreamIdOverride`/similar) is **not confirmed against a
+  live tenant** the way the extension's `edgeConfigId` was — verify it
+  against a real "Send event" rule component's raw settings before
+  trusting extracted values on a real org. Dataset resolution is scoped to
+  the currently active sandbox only, same as the rest of this chain — a
+  rule component carries no sandbox field of its own (sandbox lives on the
+  datastream, not the Launch rule), so an override into a different
+  sandbox than the one selected shows unresolved rather than guessed at;
+  switch the sidebar sandbox and re-run the search. Mock data demonstrates
+  the whole thing out of the box too — `datastream_map.sample.json`'s
+  sixth entry, "Sensitive Web Datastream (Restricted)," has no extension
+  behind it either, only PR1's mock "Sensitive Page — Route to Restricted
+  Stream" rule.
+
   The flowchart is always scoped to one connection at a time via a **"Focus
   on connection"** picker — an unfiltered, all-connections view was tried
   first, but at real-org scale (dozens of connections/projects) it's

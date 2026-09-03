@@ -18,5 +18,9 @@
   "55555555-5555-5555-5555-555555555555": {
     "name": "Legacy CRM Datastream",
     "dataset_id": "7b3c4d5e6f7a8b9c0d1e2f3a"
+  },
+  "66666666-6666-6666-6666-666666666666": {
+    "name": "Sensitive Web Datastream (Restricted)",
+    "dataset_id": "9d5e6f7a8b9c0d1e2f3a4b5c"
   }
 }

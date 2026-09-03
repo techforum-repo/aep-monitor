@@ -154,6 +154,30 @@ def test_parse_extension_does_not_crash_on_malformed_settings():
     assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "[1,2,3]"}})["datastream_ids"] == {}
 
 
+def test_parse_rule_component_extracts_a_datastream_override():
+    comp = reactor.parse_rule_component(
+        {"id": "rc1", "attributes": {"name": "Send event", "delegate_descriptor_id": "adobe-alloy::actions::send-event", "settings": '{"datastreamIdOverride": "override-123"}'}},
+        rule_id="r1", rule_name="Sensitive Page Rule",
+    )
+    assert comp["datastream_override_id"] == "override-123"
+    assert comp["rule_id"] == "r1"
+    assert comp["rule_name"] == "Sensitive Page Rule"
+
+
+def test_parse_rule_component_datastream_override_is_empty_for_a_component_with_no_override():
+    """The overwhelming majority of rule components (a condition, a
+    non-override action) carry no datastream override at all — must
+    degrade to "", not guess or crash, so callers can filter on it."""
+    comp = reactor.parse_rule_component({"id": "rc1", "attributes": {"name": "Set Variable"}}, rule_id="r1", rule_name="Some Rule")
+    assert comp["datastream_override_id"] == ""
+
+
+def test_parse_rule_component_does_not_crash_on_malformed_settings():
+    assert reactor.parse_rule_component({"id": "rc1", "attributes": {"settings": "not valid json"}}, rule_id="r1", rule_name="X")["datastream_override_id"] == ""
+    assert reactor.parse_rule_component({"id": "rc1", "attributes": {"settings": 42}}, rule_id="r1", rule_name="X")["datastream_override_id"] == ""
+    assert reactor.parse_rule_component({"id": "rc1", "attributes": None}, rule_id="r1", rule_name="X")["datastream_override_id"] == ""
+
+
 def test_parse_library_flags_failed_and_rejected_states_as_bad():
     failed = reactor.parse_library({"id": "l1", "attributes": {"name": "Staging", "state": "failed"}})
     published = reactor.parse_library({"id": "l2", "attributes": {"name": "Prod", "state": "published"}})

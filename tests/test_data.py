@@ -466,3 +466,59 @@ def test_fetch_property_datastream_edges_returns_nothing_for_a_property_with_no_
     dc_rows = data.fetch_dc()
     edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
     assert not any(e["property"] == "Acme Mobile App" for e in edges)
+
+
+def test_fetch_rule_datastream_overrides_finds_the_one_mock_override():
+    """Mock's RL4 ("Sensitive Page — Route to Restricted Stream", on PR1)
+    is the only mock rule component carrying a datastream override — every
+    other mock rule (RL1, RL2, RL3) has no components at all, proving this
+    only surfaces rules that actually override something, not every rule
+    on every property."""
+    dc_rows = data.fetch_dc()
+
+    overrides = data.fetch_rule_datastream_overrides(dc_rows, sandbox="prod")
+
+    assert len(overrides) == 1
+    row = overrides[0]
+    assert row["rule_name"] == "Sensitive Page — Route to Restricted Stream"
+    assert row["property"] == "acme.com — Web"
+    assert row["environment"] == "via rule: Sensitive Page — Route to Restricted Stream"
+    assert row["datastream_id"] == "66666666-6666-6666-6666-666666666666"
+    assert row["mapped"] is True
+    assert row["dataset"] == "Web Events — Sensitive (Restricted)"
+    # This exact datastream has no extension config anywhere — before this
+    # override is found, fetch_property_datastream_edges() alone puts it
+    # in its own "(no property)" fallback, same symptom reported live.
+    default_edges = data.fetch_property_datastream_edges(dc_rows, sandbox="prod")
+    orphan = next(e for e in default_edges if e["datastream_id"] == "66666666-6666-6666-6666-666666666666")
+    assert orphan["property"] == ""
+
+
+def test_fetch_rule_datastream_overrides_flags_an_unmapped_override(monkeypatch):
+    """An override to a datastream id with no datastream_map.json entry
+    still produces a row (flagged, dataset left blank), same "never
+    silently dropped" treatment fetch_property_datastream_edges() already
+    gives an unmapped default datastream."""
+    monkeypatch.setattr(mock_module, "MOCK_RULE_COMPONENTS", {
+        "RL4": [{"id": "rc1", "attributes": {"settings": '{"datastreamIdOverride": "not-in-the-map"}'}}],
+    })
+    dc_rows = data.fetch_dc()
+
+    overrides = data.fetch_rule_datastream_overrides(dc_rows, sandbox="prod")
+
+    assert len(overrides) == 1
+    assert overrides[0]["mapped"] is False
+    assert overrides[0]["dataset"] == ""
+    assert "unmapped" in overrides[0]["datastream"]
+
+
+def test_fetch_rule_datastream_overrides_ignores_rule_components_with_no_override(monkeypatch):
+    """A rule component that isn't a datastream override at all (a
+    condition, a "Set Variable" action, ...) contributes nothing — the
+    search only ever surfaces rules that actually override something."""
+    monkeypatch.setattr(mock_module, "MOCK_RULE_COMPONENTS", {
+        "RL4": [{"id": "rc1", "attributes": {"name": "Set Variable"}}],
+    })
+    dc_rows = data.fetch_dc()
+    overrides = data.fetch_rule_datastream_overrides(dc_rows, sandbox="prod")
+    assert overrides == []

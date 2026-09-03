@@ -56,6 +56,11 @@ class ReactorClient(BaseAdobeClient):
         items = data.get("data", []) if isinstance(data, dict) else []
         return items if isinstance(items, list) else []
 
+    async def list_rule_components(self, http: httpx.AsyncClient, property_id: str, rule_id: str) -> list[dict[str, Any]]:
+        data = await self.get(http, f"/properties/{property_id}/rules/{rule_id}/rule_components")
+        items = data.get("data", []) if isinstance(data, dict) else []
+        return items if isinstance(items, list) else []
+
     async def list_libraries(self, http: httpx.AsyncClient, property_id: str) -> list[dict[str, Any]]:
         data = await self.get(http, f"/properties/{property_id}/libraries")
         items = data.get("data", []) if isinstance(data, dict) else []
@@ -205,6 +210,72 @@ def parse_rule(item: dict[str, Any]) -> dict[str, Any]:
         "name": str(attrs.get("name") or item.get("id") or "(unnamed)"),
         "enabled": bool(attrs.get("enabled", True)),
         "published": bool(attrs.get("published")),
+        "raw": item,
+    }
+
+
+def _extract_rule_datastream_override(attrs: dict[str, Any]) -> str:
+    """The datastream id a single rule *action* overrides to, if any — the
+    Web SDK extension's "Send event" action carries its own optional
+    datastream override, separate from the extension's own default
+    `instances[]` settings _extract_datastream_ids() reads above. This is
+    what lets one rule route just the events matching it to a genuinely
+    different datastream than the property's default (e.g. a "Sensitive
+    page" rule overriding to a restricted datastream no extension config
+    ever names) — exactly the case _extract_datastream_ids() can't see,
+    since it only ever looks at extension-level settings.
+
+    UNCONFIRMED against a live tenant, unlike _extract_datastream_ids()
+    above (which was corrected twice against real API responses before
+    landing on `instances[].edgeConfigId`) — Adobe's docs don't spell out
+    the rule_component `settings` shape for this action the way they do
+    for `/extensions`. Checked here, in order, on the theory that the
+    override reuses the same key names the extension config settled on,
+    but at the top level of the action's own settings rather than nested
+    under `instances[]` — a rule component has no per-environment
+    instance to nest under, it fires in whichever environment it's built
+    into: `datastreamIdOverride`, `edgeConfigIdOverride`, `datastreamId`,
+    `edgeConfigId`. Verify against a real "Send event" rule component's
+    raw JSON (Overview's rule-override search shows every component it
+    checked) before trusting this on a real tenant, and correct the key
+    list here the same way _extract_datastream_ids() was."""
+    settings_raw = attrs.get("settings")
+    if isinstance(settings_raw, str):
+        try:
+            settings_obj = json.loads(settings_raw)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+    elif isinstance(settings_raw, dict):
+        settings_obj = settings_raw
+    else:
+        return ""
+    if not isinstance(settings_obj, dict):
+        return ""
+    for key in ("datastreamIdOverride", "edgeConfigIdOverride", "datastreamId", "edgeConfigId"):
+        value = settings_obj.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def parse_rule_component(item: dict[str, Any], rule_id: str, rule_name: str) -> dict[str, Any]:
+    """`rule_id`/`rule_name` are passed in rather than read off `item`
+    (Reactor's rule_component response carries no back-reference to its
+    parent rule at all — it's only ever fetched scoped to one rule's own
+    /rule_components endpoint) so a caller walking many rules can still
+    tell which rule each parsed component came from without a second
+    lookup. `datastream_override_id` is "" for the overwhelming majority
+    of components (most rule actions aren't a datastream override at
+    all) — callers filter on that, this function itself doesn't drop
+    anything."""
+    attrs = safe_dict(item.get("attributes"))
+    return {
+        "rule_component_id": str(item.get("id") or ""),
+        "rule_id": rule_id,
+        "rule_name": rule_name,
+        "name": str(attrs.get("name") or item.get("id") or "(unnamed)"),
+        "delegate_descriptor_id": str(attrs.get("delegate_descriptor_id") or ""),
+        "datastream_override_id": _extract_rule_datastream_override(attrs),
         "raw": item,
     }
 
