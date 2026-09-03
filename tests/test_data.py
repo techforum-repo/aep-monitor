@@ -502,6 +502,37 @@ def test_fetch_rule_datastream_overrides_finds_the_one_mock_override():
     assert orphan["property"] == ""
 
 
+def test_fetch_rule_datastream_overrides_gives_two_rules_sharing_one_datastream_the_same_label(monkeypatch):
+    """Reported live: two different rules (on two different properties)
+    overriding to the exact *same* datastream_id showed up as two
+    different Datastream nodes in the diagram — because the rule's own
+    name used to be baked into the datastream's own label
+    (data.fetch_rule_datastream_overrides() no longer does that), and
+    _build_lineage_flowchart()'s _node() merges nodes by their display
+    name, so two different label strings for the same real datastream
+    never collapsed. `rule_name` still differs correctly per row (that's
+    what the separate Rule node is for) — only the shared `datastream`
+    label needs to actually match for the merge to happen."""
+    monkeypatch.setattr(mock_module, "MOCK_RULE_COMPONENTS", {
+        **mock_module.MOCK_RULE_COMPONENTS,
+        # Same environment ("development") as RL4's own override — the
+        # point being tested is two rows that share both datastream_id
+        # *and* environment, which is exactly the case that used to
+        # produce two different node labels.
+        "RL3": [{"id": "rc2", "attributes": {"settings": '{"edgeConfigOverrides": {"development": {"datastreamId": "66666666-6666-6666-6666-666666666666"}}}'}}],
+    })
+    dc_rows = data.fetch_dc()
+
+    overrides = data.fetch_rule_datastream_overrides(dc_rows, sandbox="prod")
+
+    matching = [r for r in overrides if r["datastream_id"] == "66666666-6666-6666-6666-666666666666"]
+    assert len(matching) == 2
+    rule_names = {r["rule_name"] for r in matching}
+    assert rule_names == {"Sensitive Page — Route to Restricted Stream", "App Launch"}  # two distinct rules
+    datastream_labels = {r["datastream"] for r in matching}
+    assert len(datastream_labels) == 1  # ... but exactly one shared datastream label between them
+
+
 def test_fetch_rule_datastream_overrides_flags_an_unmapped_override(monkeypatch):
     """An override to a datastream id with no datastream_map.json entry
     still produces a row (flagged, dataset left blank), same "never

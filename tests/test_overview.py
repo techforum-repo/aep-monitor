@@ -36,8 +36,11 @@ def _row(schema="sch", dataset="ds", connection="conn", dataview="dv", project="
     return {"schema": schema, "dataset": dataset, "connection": connection, "dataview": dataview, "project": project}
 
 
-def _edge(prop="acme.com — Web", domains=None, environment="production", datastream="Prod Web Datastream (production)", dataset="Loyalty Events"):
-    return {"property": prop, "domains": domains if domains is not None else ["www.acme.com"], "environment": environment, "datastream": datastream, "dataset": dataset}
+def _edge(prop="acme.com — Web", domains=None, environment="production", datastream="Prod Web Datastream (production)", dataset="Loyalty Events", rule_name=None):
+    edge = {"property": prop, "domains": domains if domains is not None else ["www.acme.com"], "environment": environment, "datastream": datastream, "dataset": dataset}
+    if rule_name is not None:
+        edge["rule_name"] = rule_name
+    return edge
 
 
 def _node_id(dot: str, label: str) -> str:
@@ -213,6 +216,46 @@ def test_flowchart_joins_a_property_edge_onto_the_same_dataset_node_by_name():
     assert _edge_label(dot, domain, prop) is None
     assert _edge_label(dot, prop, datastream) is None
     assert _edge_label(dot, datastream, dataset) is None  # each edge exists, count 1 so no "×N"
+
+
+def test_flowchart_routes_a_rule_based_edge_through_its_own_rule_node():
+    """An edge carrying `rule_name` (from data.fetch_rule_datastream_
+    overrides()) draws Property -> Rule -> Datastream instead of a direct
+    Property -> Datastream edge — visibly a different shape from a
+    property's own default datastream, not just different text on the
+    same arrow."""
+    edges = [_edge(datastream="Sensitive Web Datastream (development)", rule_name="Sensitive Page Rule")]
+    dot = _build_lineage_flowchart([], edges)
+
+    prop = _node_id(dot, "acme.com — Web")
+    rule = _node_id(dot, "Sensitive Page Rule")
+    datastream = _node_id(dot, "Sensitive Web Datastream (development)")
+    assert _edge_label(dot, prop, rule) is None  # exists, count 1
+    assert _edge_label(dot, rule, datastream) is None
+    # No direct Property -> Datastream edge for a rule-based row.
+    assert not re.search(rf'\b{prop} -> {datastream}\b', dot)
+
+
+def test_flowchart_merges_two_different_rules_sharing_the_same_datastream_into_one_node():
+    """Reported live: two different rules (here, on two different
+    properties) overriding to the exact same datastream used to render as
+    two separate Datastream nodes — because the rule's own name used to
+    be baked into the datastream's label, breaking _node()'s merge-by-
+    display-name behavior specifically for rule-sourced edges. Fixed by
+    keeping the datastream's own label rule-agnostic (just its mapped
+    name + environment, same as a property's default edge) — the rule
+    identity lives entirely in the separate Rule node instead."""
+    edges = [
+        _edge(prop="EDCure", datastream="Sensitive Web Datastream (production)", rule_name="AEP Quiz Answer (gtm)"),
+        _edge(prop="Fixincontinence", datastream="Sensitive Web Datastream (production)", rule_name="AEP Quiz Answer"),
+    ]
+    dot = _build_lineage_flowchart([], edges)
+
+    assert dot.count('label="Sensitive Web Datastream (production)"') == 1  # one shared node, not two
+    datastream = _node_id(dot, "Sensitive Web Datastream (production)")
+    rule_gtm, rule_plain = _node_id(dot, "AEP Quiz Answer (gtm)"), _node_id(dot, "AEP Quiz Answer")
+    assert _edge_label(dot, rule_gtm, datastream) is None  # both rules feed the one shared node
+    assert _edge_label(dot, rule_plain, datastream) is None
 
 
 def test_flowchart_fans_out_multiple_domains_into_one_property_node():

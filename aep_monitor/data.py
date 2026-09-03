@@ -560,14 +560,31 @@ def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str 
             effective_sandbox = override["sandbox"] or (sandbox or "")
             mapped_entry = datastream_map.get(datastream_id)
             mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
-            label_suffix = f"via rule: {rule['name']} ({environment})"
+            # Deliberately the *plain* "(environment)" label — the same
+            # one fetch_property_datastream_edges() uses for its own
+            # edges — not "(via rule: X, environment)". Reported live as
+            # a real duplication bug: two different rules overriding to
+            # the exact same datastream_id used to get two different
+            # datastream *nodes* in the diagram (one per rule name baked
+            # into the label), since _build_lineage_flowchart()'s _node()
+            # keys a node by its display name — the same collapsing logic
+            # that already correctly merges e.g. five different
+            # properties sharing one datastream into a single node.
+            # Baking the rule name into the datastream's own label broke
+            # that merge specifically for rule-sourced edges; dropping it
+            # here restores the merge (two rules -> one shared Datastream
+            # node, fed by two separate Rule nodes) — no information is
+            # lost, since which rule it came from is exactly what the
+            # dedicated Rule node between Property and Datastream already
+            # shows (see _build_lineage_flowchart()'s docstring), and the
+            # debug table has its own "Rule" column besides.
             if mapped_entry:
-                datastream_label = f"{mapped_entry['name'] or datastream_id} ({label_suffix})"
+                datastream_label = f"{mapped_entry['name'] or datastream_id} ({environment})"
                 dataset_label = _dataset_names_for(effective_sandbox).get(
                     mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "",
                 )
             else:
-                datastream_label = f"{datastream_id} (unmapped, {label_suffix})"
+                datastream_label = f"{datastream_id} (unmapped, {environment})"
                 dataset_label = ""
             rows.append({
                 "property": prop["property_name"], "domains": list(prop.get("domains") or []),
