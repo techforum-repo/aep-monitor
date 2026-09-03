@@ -214,8 +214,9 @@ def parse_rule(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extract_rule_datastream_override(attrs: dict[str, Any]) -> str:
-    """The datastream id a single rule *action* overrides to, if any — the
+def _extract_rule_datastream_overrides(attrs: dict[str, Any]) -> dict[str, str]:
+    """{environment: datastream_id} for every environment override a single
+    rule *action*'s own datastream override actually carries, if any — the
     Web SDK extension's "Send event" action carries its own optional
     datastream override, separate from the extension's own default
     `instances[]` settings _extract_datastream_ids() reads above. This is
@@ -225,37 +226,49 @@ def _extract_rule_datastream_override(attrs: dict[str, Any]) -> str:
     ever names) — exactly the case _extract_datastream_ids() can't see,
     since it only ever looks at extension-level settings.
 
-    UNCONFIRMED against a live tenant, unlike _extract_datastream_ids()
-    above (which was corrected twice against real API responses before
-    landing on `instances[].edgeConfigId`) — Adobe's docs don't spell out
-    the rule_component `settings` shape for this action the way they do
-    for `/extensions`. Checked here, in order, on the theory that the
-    override reuses the same key names the extension config settled on,
-    but at the top level of the action's own settings rather than nested
-    under `instances[]` — a rule component has no per-environment
-    instance to nest under, it fires in whichever environment it's built
-    into: `datastreamIdOverride`, `edgeConfigIdOverride`, `datastreamId`,
-    `edgeConfigId`. Verify against a real "Send event" rule component's
-    raw JSON (Overview's rule-override search shows every component it
-    checked) before trusting this on a real tenant, and correct the key
-    list here the same way _extract_datastream_ids() was."""
+    Reported live: the override itself is per-environment/sandbox, the
+    same shape as the extension's own `instances[]` config, not a single
+    flat value — confirmed by checking a live tenant (the earlier
+    single-value version of this function was wrong for exactly that
+    reason). Same key-checking shape as _extract_datastream_ids() above,
+    applied at the top level of the action's own settings rather than
+    nested under `instances[]` (a rule component has no per-environment
+    *instance* to nest under — one action fires in whichever environment
+    it's built into, but can still name a different override datastream
+    per environment/sandbox): `datastreamIdOverride`/`edgeConfigIdOverride`
+    (production), `stagingDatastreamIdOverride`/`stagingEdgeConfigIdOverride`
+    (staging), `developmentDatastreamIdOverride`/
+    `developmentEdgeConfigIdOverride` (development) — still not confirmed
+    against this exact key spelling on a live tenant (only that the
+    *shape* is per-environment, not the literal key names), so verify
+    against a real override's raw settings (Overview's rule-override
+    search shows the raw JSON for every component it checks) before
+    trusting extracted values, and correct the key list here the same way
+    _extract_datastream_ids() was."""
     settings_raw = attrs.get("settings")
     if isinstance(settings_raw, str):
         try:
             settings_obj = json.loads(settings_raw)
         except (json.JSONDecodeError, TypeError):
-            return ""
+            return {}
     elif isinstance(settings_raw, dict):
         settings_obj = settings_raw
     else:
-        return ""
+        return {}
     if not isinstance(settings_obj, dict):
-        return ""
-    for key in ("datastreamIdOverride", "edgeConfigIdOverride", "datastreamId", "edgeConfigId"):
-        value = settings_obj.get(key)
-        if value:
-            return str(value)
-    return ""
+        return {}
+
+    result: dict[str, str] = {}
+    production_id = settings_obj.get("datastreamIdOverride") or settings_obj.get("edgeConfigIdOverride")
+    if production_id:
+        result["production"] = str(production_id)
+    staging_id = settings_obj.get("stagingDatastreamIdOverride") or settings_obj.get("stagingEdgeConfigIdOverride")
+    if staging_id:
+        result["staging"] = str(staging_id)
+    development_id = settings_obj.get("developmentDatastreamIdOverride") or settings_obj.get("developmentEdgeConfigIdOverride")
+    if development_id:
+        result["development"] = str(development_id)
+    return result
 
 
 def parse_rule_component(item: dict[str, Any], rule_id: str, rule_name: str) -> dict[str, Any]:
@@ -264,7 +277,7 @@ def parse_rule_component(item: dict[str, Any], rule_id: str, rule_name: str) -> 
     parent rule at all — it's only ever fetched scoped to one rule's own
     /rule_components endpoint) so a caller walking many rules can still
     tell which rule each parsed component came from without a second
-    lookup. `datastream_override_id` is "" for the overwhelming majority
+    lookup. `datastream_overrides` is `{}` for the overwhelming majority
     of components (most rule actions aren't a datastream override at
     all) — callers filter on that, this function itself doesn't drop
     anything."""
@@ -275,7 +288,7 @@ def parse_rule_component(item: dict[str, Any], rule_id: str, rule_name: str) -> 
         "rule_name": rule_name,
         "name": str(attrs.get("name") or item.get("id") or "(unnamed)"),
         "delegate_descriptor_id": str(attrs.get("delegate_descriptor_id") or ""),
-        "datastream_override_id": _extract_rule_datastream_override(attrs),
+        "datastream_overrides": _extract_rule_datastream_overrides(attrs),
         "raw": item,
     }
 

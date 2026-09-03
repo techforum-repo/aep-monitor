@@ -482,7 +482,7 @@ def test_fetch_rule_datastream_overrides_finds_the_one_mock_override():
     row = overrides[0]
     assert row["rule_name"] == "Sensitive Page — Route to Restricted Stream"
     assert row["property"] == "acme.com — Web"
-    assert row["environment"] == "via rule: Sensitive Page — Route to Restricted Stream"
+    assert row["environment"] == "production"
     assert row["datastream_id"] == "66666666-6666-6666-6666-666666666666"
     assert row["mapped"] is True
     assert row["dataset"] == "Web Events — Sensitive (Restricted)"
@@ -510,6 +510,24 @@ def test_fetch_rule_datastream_overrides_flags_an_unmapped_override(monkeypatch)
     assert overrides[0]["mapped"] is False
     assert overrides[0]["dataset"] == ""
     assert "unmapped" in overrides[0]["datastream"]
+
+
+def test_fetch_rule_datastream_overrides_gives_one_row_per_environment(monkeypatch):
+    """Reported live: the override is per-environment/sandbox, the same
+    shape as the extension's own default instances[] config — a rule
+    overriding both production and staging must produce two rows, not
+    one collapsed row, same as fetch_property_datastream_edges() already
+    does for a property's default datastream."""
+    monkeypatch.setattr(mock_module, "MOCK_RULE_COMPONENTS", {
+        "RL4": [{"id": "rc1", "attributes": {"settings": '{"datastreamIdOverride": "prod-override", "stagingDatastreamIdOverride": "staging-override"}'}}],
+    })
+    dc_rows = data.fetch_dc()
+
+    overrides = data.fetch_rule_datastream_overrides(dc_rows, sandbox="prod")
+
+    environments = {r["environment"]: r["datastream_id"] for r in overrides}
+    assert environments == {"production": "prod-override", "staging": "staging-override"}
+    assert all(r["rule_name"] == "Sensitive Page — Route to Restricted Stream" for r in overrides)
 
 
 def test_fetch_rule_datastream_overrides_ignores_rule_components_with_no_override(monkeypatch):

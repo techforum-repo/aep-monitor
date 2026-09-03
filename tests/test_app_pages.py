@@ -197,18 +197,20 @@ def test_overview_rule_datastream_override_search_finds_and_merges_the_mock_over
 
     at.button(key="overview_search_rule_overrides").click().run()
     assert at.exception == []
+    assert any("Found 1 rule-based override" in c.value for c in at.caption)
 
-    override_table = next(df.value for df in at.get("dataframe") if "Rule" in df.value.columns and "Datastream" in df.value.columns)
-    assert override_table.iloc[0]["Rule"] == "Sensitive Page — Route to Restricted Stream"
-    assert override_table.iloc[0]["Property"] == "acme.com — Web"
-    assert override_table.iloc[0]["Resolved dataset"] == "Web Events — Sensitive (Restricted)"
-
-    # Merged into the same unfiltered debug table too — now attached to
-    # its property, via the rule, instead of showing "—".
+    # No separate results table — a match is embedded straight into the
+    # same unfiltered debug table, now attached to its property (via a
+    # new "Rule" column) instead of showing "—", and the diagram draws it
+    # as its own Property → Rule → Datastream chain (not independently
+    # inspectable here — Streamlit's AppTest can't read a graphviz_chart's
+    # content, see the "unrelated connection" test above).
     debug_table = next(df.value for df in at.get("dataframe") if "In map file?" in df.value.columns)
     sensitive_after = debug_table[debug_table["Datastream ID (extracted)"] == "66666666-6666-6666-6666-666666666666"]
     assert sensitive_after.iloc[0]["Property"] == "acme.com — Web"
-    assert "via rule: Sensitive Page — Route to Restricted Stream" in sensitive_after.iloc[0]["Environment"]
+    assert sensitive_after.iloc[0]["Rule"] == "Sensitive Page — Route to Restricted Stream"
+    assert sensitive_after.iloc[0]["Environment"] == "production"
+    assert sensitive_after.iloc[0]["Resolved dataset name"] == "Web Events — Sensitive (Restricted)"
 
 
 def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch):

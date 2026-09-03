@@ -258,16 +258,15 @@ def _render_rule_datastream_overrides() -> None:
         elif not override_edges:
             st.caption("No rule found overriding a datastream, across every rule on every property.")
         else:
-            st.dataframe(
-                pd.DataFrame([
-                    {
-                        "Rule": e["rule_name"], "Property": e["property"] or "—",
-                        "Datastream": e["datastream"], "Datastream ID (extracted)": e["datastream_id"],
-                        "Resolved dataset": e["dataset"] or "(unmapped, or provisioned in a different sandbox)",
-                    }
-                    for e in override_edges
-                ]),
-                use_container_width=True, hide_index=True, key="overview_rule_override_table",
+            # No separate results table here on purpose (there used to be
+            # one) — a match is embedded straight into the diagram/debug
+            # table below as its own Property → Rule → Datastream node
+            # chain instead, so there's exactly one place to look, not two
+            # disagreeing views of the same fact.
+            st.caption(
+                f"Found {len(override_edges)} rule-based override(s) — each now shown as its own "
+                "**Property → Rule → Datastream** chain in the diagram and debug table below, distinct from a "
+                "property's own default Datastream node."
             )
 
 
@@ -301,14 +300,18 @@ def _render_rule_datastream_overrides() -> None:
 # diagram can't (troubleshooting extraction/mapping directly against a
 # real tenant's raw ids), not scoped to one connection at all.
 _LINEAGE_STAGE_COLORS = {
-    "domain": "#d66a97", "property": "#b8846a", "datastream": "#a89530",
+    "domain": "#d66a97", "property": "#b8846a", "rule": "#c17a3a", "datastream": "#a89530",
     "schema": "#1fada6", "dataset": "#2a78d6", "connection": "#3fae5c", "dataview": "#e8871a", "project": "#9089fa",
 }
 # Same order as the pipeline itself (left to right) — used for both the
 # legend and each node's hover text, so "which color is which stage" never
-# has to be inferred or memorized from the caption alone.
+# has to be inferred or memorized from the caption alone. "Rule" only ever
+# appears between Property and Datastream when a rule (not the property's
+# own default Web SDK config) is what's overriding the datastream — see
+# _build_lineage_flowchart()'s docstring and data.fetch_rule_datastream_
+# overrides().
 _LINEAGE_STAGE_LABELS = {
-    "domain": "Website Domain", "property": "Property", "datastream": "Datastream",
+    "domain": "Website Domain", "property": "Property", "rule": "Rule (datastream override)", "datastream": "Datastream",
     "schema": "Schema", "dataset": "Dataset", "connection": "Connection", "dataview": "Data View", "project": "Project",
 }
 
@@ -323,7 +326,7 @@ def _render_lineage_legend() -> None:
     st.markdown(f'<div style="margin-bottom:.4rem">{chips}</div>', unsafe_allow_html=True)
 
 
-_LINEAGE_STAGE_ORDER = ["domain", "property", "datastream", "schema", "dataset", "connection", "dataview", "project"]
+_LINEAGE_STAGE_ORDER = ["domain", "property", "rule", "datastream", "schema", "dataset", "connection", "dataview", "project"]
 # The CJA-side chain proper — fetch_cja_dataset_lineage() rows carry
 # exactly these five keys. Kept separate from _LINEAGE_STAGE_ORDER (which
 # also includes the three upstream stages merged in from property_edges,
@@ -379,6 +382,15 @@ def _build_lineage_flowchart(rows: list[dict], property_edges: list[dict] | None
     for the fuller history. A `domains` list fans out to one edge per
     domain into the same Property node — a property with two domains gets
     two small boxes feeding one, not one node with two names crammed in.
+
+    A `property_edges` entry carrying `rule_name` (from
+    data.fetch_rule_datastream_overrides(), merged in by _render_lineage()
+    alongside fetch_property_datastream_edges()'s own edges) routes
+    through its own Rule node — Property -> Rule -> Datastream — instead
+    of a direct Property -> Datastream edge, so a rule's own action
+    overriding the datastream (rather than the property's own default Web
+    SDK config) is visibly a different shape in the diagram, not just
+    different text on the same edge.
 
     A link's path count shows as a small "×N" edge label only when it's
     more than one and show_path_counts is True (the default) — nothing
@@ -456,7 +468,22 @@ def _build_lineage_flowchart(rows: list[dict], property_edges: list[dict] | None
         datastream_node = _node("datastream", edge["datastream"])
         property_node = _node("property", edge["property"])
         _link(datastream_node, dataset_node)
-        _link(property_node, datastream_node)
+        # An edge from data.fetch_rule_datastream_overrides() carries
+        # `rule_name` — a rule's own action overriding the datastream,
+        # not the property's own default Web SDK config
+        # (fetch_property_datastream_edges() edges never set this key at
+        # all, so .get() here is the only branch condition needed). Routed
+        # through its own Rule node instead of a direct Property ->
+        # Datastream edge, so a rule-based override reads as visibly
+        # distinct from a property's default datastream at a glance, not
+        # just as text buried in the datastream's own label.
+        rule_name = edge.get("rule_name")
+        if rule_name:
+            rule_node = _node("rule", rule_name)
+            _link(property_node, rule_node)
+            _link(rule_node, datastream_node)
+        else:
+            _link(property_node, datastream_node)
         for domain in edge["domains"]:
             _link(_node("domain", domain), property_node)
 
@@ -544,6 +571,13 @@ def _render_property_datastream_debug(property_edges: list[dict]) -> None:
                         # case) — "—", not an empty cell, so it reads as
                         # "none" rather than looking like missing data.
                         "Property": e["property"] or "—",
+                        # Blank for every row except one from
+                        # fetch_rule_datastream_overrides() — the rule
+                        # whose own action overrides the datastream,
+                        # rather than the property's own default Web SDK
+                        # config (see _build_lineage_flowchart()'s Rule
+                        # node).
+                        "Rule": e.get("rule_name") or "—",
                         "Environment": e["environment"] or "—",
                         "Datastream": e["datastream"],
                         "Datastream ID (extracted)": e["datastream_id"],

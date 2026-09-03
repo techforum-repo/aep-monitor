@@ -466,14 +466,14 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
 
 def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str | None = None) -> list[dict[str, Any]]:
     """{property, domains, environment, datastream_id, datastream, dataset,
-    mapped, mapped_dataset_id, rule_name} rows — same shape
-    fetch_property_datastream_edges() produces (a caller can just append
-    this onto that function's own result and feed both to the same
-    lineage chart / debug table with zero changes to either), but closing
-    a *different* gap: one rule's own action can override a property's
-    default Web SDK datastream for just the events matching that rule
-    (Adobe's "Send event" action — see reactor.py's
-    _extract_rule_datastream_override()), which
+    mapped, mapped_dataset_id, rule_id, rule_name} rows — same shape
+    fetch_property_datastream_edges() produces plus one extra field
+    (`rule_name`, read by ui/overview.py to draw a Property → Rule →
+    Datastream chain instead of a direct Property → Datastream edge), but
+    closing a *different* gap: one rule's own action can override a
+    property's default Web SDK datastream for just the events matching
+    that rule (Adobe's "Send event" action — see reactor.py's
+    _extract_rule_datastream_overrides()), which
     fetch_property_datastream_edges() can never see since it only ever
     reads the extension's own default `instances[]` settings. Reported
     live as the actual symptom this closes: a datastream used *only*
@@ -496,23 +496,23 @@ def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str 
     surfaces "every rule on every property," only the ones that actually
     do the thing being searched for.
 
-    `environment` is set to `f"via rule: {rule name}"` rather than an
-    actual build environment — a rule-level override has no notion of
-    production/staging/development the way an extension's own instance
-    config does (a rule fires wherever it's built into, not per named
-    instance) — which is also what makes this show up distinguishably
-    from a property's default datastream edge in both the lineage
-    diagram and the debug table: both already just display whatever
-    string sits in `environment` verbatim as part of the datastream's own
-    label, so nothing about either needs to change to support this.
+    Reported live: the override is per-environment/sandbox, the same
+    shape as the extension's own default `instances[]` config — one row
+    per (rule, environment) pair, exactly mirroring how
+    fetch_property_datastream_edges() itself handles a property's default
+    datastream carrying a genuinely different id per environment. A rule
+    with overrides in more than one environment gets one row per
+    environment, not collapsed into one.
 
     Dataset resolution is against whichever `sandbox` is passed in only —
     same single-sandbox scoping fetch_property_datastream_edges() already
-    has, and the same known gap: a rule component carries no sandbox
-    field of its own at all (sandbox lives on the *datastream*, not on
-    the Launch rule config), so an override pointing at a datastream
-    provisioned in a different sandbox than the one currently active
-    resolves as unmapped/unresolved here rather than guessed at.
+    has, and the same known gap: a rule component's *environment*
+    (production/staging/development, a Launch/Reactor concept) is not the
+    same thing as an AEP *sandbox* — the override points at a datastream,
+    and sandbox is a property of that datastream, not exposed anywhere in
+    Reactor's rule/rule_component payload. So an override pointing at a
+    datastream provisioned in a different sandbox than the one currently
+    active resolves as unmapped/unresolved here rather than guessed at.
     Switching the sidebar sandbox and re-running the search is the
     intended fix, same as every other single-sandbox gap in this file."""
     datastream_map = load_datastream_map()
@@ -540,24 +540,22 @@ def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str 
     rows: list[dict[str, Any]] = []
     for prop, rule, comp in raw_triples:
         parsed = reactor_api.parse_rule_component(comp, rule["rule_id"], rule["name"])
-        datastream_id = parsed["datastream_override_id"]
-        if not datastream_id:
-            continue  # the overwhelming majority — not an override at all, dropped rather than kept
-        mapped_entry = datastream_map.get(datastream_id)
-        mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
-        environment = f"via rule: {rule['name']}"
-        if mapped_entry:
-            datastream_label = f"{mapped_entry['name'] or datastream_id} ({environment})"
-            dataset_label = dataset_names.get(mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "")
-        else:
-            datastream_label = f"{datastream_id} (unmapped, {environment})"
-            dataset_label = ""
-        rows.append({
-            "property": prop["property_name"], "domains": list(prop.get("domains") or []),
-            "environment": environment, "datastream_id": datastream_id,
-            "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
-            "mapped_dataset_id": mapped_dataset_id, "rule_name": rule["name"],
-        })
+        for environment, datastream_id in parsed["datastream_overrides"].items():
+            mapped_entry = datastream_map.get(datastream_id)
+            mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
+            label_suffix = f"via rule: {rule['name']} ({environment})"
+            if mapped_entry:
+                datastream_label = f"{mapped_entry['name'] or datastream_id} ({label_suffix})"
+                dataset_label = dataset_names.get(mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "")
+            else:
+                datastream_label = f"{datastream_id} (unmapped, {label_suffix})"
+                dataset_label = ""
+            rows.append({
+                "property": prop["property_name"], "domains": list(prop.get("domains") or []),
+                "environment": environment, "datastream_id": datastream_id,
+                "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
+                "mapped_dataset_id": mapped_dataset_id, "rule_id": rule["rule_id"], "rule_name": rule["name"],
+            })
     return rows
 
 
