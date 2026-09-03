@@ -57,7 +57,27 @@ class ReactorClient(BaseAdobeClient):
         return items if isinstance(items, list) else []
 
     async def list_rule_components(self, http: httpx.AsyncClient, property_id: str, rule_id: str) -> list[dict[str, Any]]:
-        data = await self.get(http, f"/properties/{property_id}/rules/{rule_id}/rule_components")
+        """Confirmed live (a real tenant's working request URL, not a
+        guess): rule_components is addressed via the **flat**
+        `/rules/{rule_id}/rule_components` path, NOT nested under
+        `/properties/{id}/...` the way `/rules` itself is above — a rule
+        id is already globally unique in Reactor, so no property scoping
+        is needed (or accepted) for its own sub-resources. `property_id`
+        is kept as a parameter for symmetry with every other `list_*()`
+        method here, and because every caller already has it in hand from
+        the property walk — it's just not part of this one URL.
+
+        Real, silent bug this fixes: the earlier
+        `/properties/{id}/rules/{rule_id}/rule_components` path 404s, and
+        `base.py`'s `_request()` deliberately returns `{}` on a 404 rather
+        than raising (a 404 there usually just means "this optional
+        sub-resource doesn't exist yet," not an error worth surfacing) —
+        so every single rule_components call failed completely silently,
+        every rule reporting zero components, with no error banner
+        anywhere to notice it by. Reported live as "mapping exists, still
+        property not connected to override rule then to datastream" with
+        no warning shown at all — the 404-swallowing is exactly why."""
+        data = await self.get(http, f"/rules/{rule_id}/rule_components")
         items = data.get("data", []) if isinstance(data, dict) else []
         return items if isinstance(items, list) else []
 
