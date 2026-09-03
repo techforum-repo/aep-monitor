@@ -817,47 +817,77 @@ once per alert, not on every subsequent poll while it's still open.
 
   A datastream can also land in that same "(no property)" bucket for a
   reason that isn't actually a dead mapping at all: a rule's own action
-  (Web SDK's "Send event" carries its own optional datastream override)
-  can route just the events matching that rule to a genuinely different
-  datastream than the property's default — one no extension config ever
-  names, so `fetch_property_datastream_edges()` alone can never attach it
-  to a property, even though it's real and live. Reported live as
-  "Sensitive Data Stream not connected to any tag/site, but a tag rule
-  overrides the datastream to it — can we identify which rule and connect
-  it?" — the **"Rule-based datastream overrides"** expander under the
-  chart (`data.fetch_rule_datastream_overrides()`) closes it: an on-demand
-  search (not run on every refresh — a real N properties × M rules amount
-  of extra Reactor calls, for a fact that's rare by construction) over
-  every rule's own `/rule_components`, keeping only the ones that actually
-  carry a datastream override. Reported live: the override is
-  per-environment/sandbox, the same shape as the extension's own default
-  `instances[]` config, not one flat value — one row per (rule,
-  environment) pair, mirroring how `fetch_property_datastream_edges()`
-  already handles a property's default datastream disagreeing across
-  environments. A match isn't shown as a separate results table — it's
-  merged straight into the same edge list the chart/debug table already
-  read, and drawn as its **own node**: the flowchart gets a ninth stage,
-  **Rule**, sitting between Property and Datastream only on a rule-based
-  edge (`Property → Rule → Datastream`, vs. a property's own default
+  (the Web SDK's "Send event" action's "Datastream Configuration
+  Overrides") can route just the events matching that rule to a genuinely
+  different datastream than the property's default — one no extension
+  config ever names, so `fetch_property_datastream_edges()` alone can
+  never attach it to a property, even though it's real and live. Reported
+  live as "Sensitive Data Stream not connected to any tag/site, but a tag
+  rule overrides the datastream to it — can we identify which rule and
+  connect it?" — `data.fetch_rule_datastream_overrides()` closes it,
+  walking every rule's own `/rule_components` and keeping only the ones
+  that actually carry a datastream override. It runs automatically
+  alongside the rest of the lineage chart (on every sandbox change and
+  every "Refresh everything" click), not behind a separate search step —
+  the end-to-end flow just includes it. That's a real, accepted cost: a
+  genuine N (properties) × M (rules) amount of extra Reactor calls on top
+  of the six-leg walk `fetch_dc()` already does, every time the lineage
+  chart recomputes — worth watching on a tenant with many
+  properties/rules if a refresh starts feeling slow.
+
+  **CONFIRMED live** — a real tenant's raw `/rule_components` response for
+  a "Send event" component was pulled and checked, not just inferred from
+  the UI: the override sits under a JSON key `edgeConfigOverrides`, keyed
+  by environment (`development`/`staging`/`production`), each holding its
+  own `enabled` (boolean), `sandbox`, and `datastreamId` — one row per
+  (rule, environment) pair, exactly mirroring how
+  `fetch_property_datastream_edges()` already handles a property's
+  *default* datastream disagreeing across environments. The delegate id
+  this app filters rule components by (`adobe-alloy::actions::send-event`)
+  was confirmed the same way. A flat, non-nested fallback (the same key
+  names the extension's own default config settled on) is kept in
+  `_extract_rule_datastream_overrides()` in case some other rule action
+  doesn't reuse this shape — never seen live, same "checked as a hedge"
+  treatment `_extract_datastream_ids()` itself gives an unconfirmed
+  rename.
+
+  `enabled: false` is honored, confirmed via the Launch UI's own help
+  text ("should resolve to true to enable overrides, and false to provide
+  no overrides"): an environment whose override is configured but turned
+  off is skipped rather than reported as a live connection. `enabled` can
+  also be a data-element expression (resolved dynamically at runtime,
+  e.g. `"%someVar%"`) rather than a literal boolean — treated as active
+  rather than silently dropped, since a false positive here is far
+  cheaper than hiding a genuinely live override.
+
+  The genuine win from having the real payload: each environment carries
+  its own explicit **`sandbox`** field right alongside its own
+  `datastreamId` — a literal fact this app can read straight off the
+  override, not an inference. Dataset resolution uses *that* sandbox when
+  it was extracted, rather than assuming whichever sandbox happens to be
+  active in the sidebar — closing, for this one case, the single-sandbox
+  gap every other lookup in this chain still has (an extension's own
+  default config carries no sandbox field to read at all, so that half of
+  the chain is still sidebar-inferred). The debug table's **"Sandbox"**
+  column shows which sandbox was actually used and whether it came from
+  the override itself (`"dev (override)"`) or fell back to the sidebar's
+  active one (`"prod (sidebar)"`) — so it's never ambiguous which case a
+  given row is in.
+
+  A match isn't shown as a separate results table — it's merged straight
+  into the same edge list the chart/debug table already read, and drawn
+  as its **own node**: the flowchart gets a ninth stage, **Rule**, sitting
+  between Property and Datastream only on a rule-based edge
+  (`Property → Rule → Datastream`, vs. a property's own default
   `Property → Datastream` directly) — visibly a different shape at a
   glance, not just different text buried in the same edge. The debug
   table gets a matching **"Rule"** column, blank ("—") for every row
-  except the ones this search found. The override key itself
-  (`datastreamIdOverride`/similar) is **not confirmed against a live
-  tenant** the way the extension's `edgeConfigId` was — verify it against
-  a real "Send event" rule component's raw settings before trusting
-  extracted values on a real org. Dataset resolution is scoped to the
-  currently active sandbox only, same as the rest of this chain — a rule
-  component's own environment (production/staging/development, a
-  Launch/Reactor concept) isn't the same thing as an AEP sandbox, which is
-  a property of the *datastream* the override points at and isn't exposed
-  anywhere in Reactor's rule/rule_component payload — so an override into
-  a datastream provisioned in a different sandbox than the one selected
-  shows unresolved rather than guessed at; switch the sidebar sandbox and
-  re-run the search. Mock data demonstrates the whole thing out of the box
-  too — `datastream_map.sample.json`'s sixth entry, "Sensitive Web
-  Datastream (Restricted)," has no extension behind it either, only PR1's
-  mock "Sensitive Page — Route to Restricted Stream" rule.
+  except the ones this walk found. Mock data demonstrates the whole thing
+  out of the box — `datastream_map.sample.json`'s sixth entry, "Sensitive
+  Web Datastream (Restricted)," has no extension behind it at all, only
+  PR1's mock "Sensitive Page — Route to Restricted Stream" rule, whose
+  override deliberately names its own ("dev") sandbox to prove resolution
+  follows it rather than the mock's default "prod" sidebar sandbox.
 
   The flowchart is always scoped to one connection at a time via a **"Focus
   on connection"** picker — an unfiltered, all-connections view was tried

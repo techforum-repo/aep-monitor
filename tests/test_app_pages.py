@@ -175,42 +175,33 @@ def test_overview_lineage_renders_without_exception_when_focused_on_a_connection
     assert debug_table[debug_table["Property"] == "acme.com — Web"]["Website domain(s)"].iloc[0] == "www.acmecorp.com, shop.acmecorp.com"
 
 
-def test_overview_rule_datastream_override_search_finds_and_merges_the_mock_override():
-    """The "Rule-based datastream overrides" expander is off by default
-    (not searched yet) and, once the button is clicked, finds mock's one
-    override (RL4 on PR1) and merges it into the same debug table the
-    property-level extraction already populates — reported live as
-    "a Sensitive datastream isn't connected to any tag, but a tag rule
-    overrides it to Sensitive; can we identify which rule and connect it
-    through that rule?"."""
+def test_overview_rule_datastream_override_is_found_automatically_and_merged():
+    """No separate search step any more (there used to be a manual
+    button) — a rule-based override is found as part of the normal
+    lineage refresh and shown directly in the same debug table the
+    property-level extraction already populates, via a "Rule" column and
+    its own Sandbox column — reported live as "a Sensitive datastream
+    isn't connected to any tag, but a tag rule overrides it to Sensitive;
+    can we identify which rule and connect it through that rule?", with a
+    follow-up that the override's own AEP sandbox (independent of the
+    Launch build environment) has to be honored too, not just guessed at
+    from the sidebar."""
     at = AppTest.from_file(APP_PATH, default_timeout=30)
     at.run()
     assert at.exception == []
-    assert any("Not searched yet in this sandbox" in c.value for c in at.caption)
 
-    # Before the search: the mock "Sensitive" datastream resolves via
-    # datastream_map.sample.json but has no property behind it in the
-    # debug table at all — the exact symptom this feature closes.
+    # No property claims this datastream as a default *and* mock's RL4
+    # override already found it in the same run — attached to its
+    # property (via "Rule"), resolved against its own "dev" sandbox
+    # (mock's active sandbox defaults to "prod" — see get_active_sandbox())
+    # rather than left unresolved.
     debug_table = next(df.value for df in at.get("dataframe") if "In map file?" in df.value.columns)
-    sensitive_before = debug_table[debug_table["Datastream ID (extracted)"] == "66666666-6666-6666-6666-666666666666"]
-    assert sensitive_before.iloc[0]["Property"] == "—"
-
-    at.button(key="overview_search_rule_overrides").click().run()
-    assert at.exception == []
-    assert any("Found 1 rule-based override" in c.value for c in at.caption)
-
-    # No separate results table — a match is embedded straight into the
-    # same unfiltered debug table, now attached to its property (via a
-    # new "Rule" column) instead of showing "—", and the diagram draws it
-    # as its own Property → Rule → Datastream chain (not independently
-    # inspectable here — Streamlit's AppTest can't read a graphviz_chart's
-    # content, see the "unrelated connection" test above).
-    debug_table = next(df.value for df in at.get("dataframe") if "In map file?" in df.value.columns)
-    sensitive_after = debug_table[debug_table["Datastream ID (extracted)"] == "66666666-6666-6666-6666-666666666666"]
-    assert sensitive_after.iloc[0]["Property"] == "acme.com — Web"
-    assert sensitive_after.iloc[0]["Rule"] == "Sensitive Page — Route to Restricted Stream"
-    assert sensitive_after.iloc[0]["Environment"] == "production"
-    assert sensitive_after.iloc[0]["Resolved dataset name"] == "Web Events — Sensitive (Restricted)"
+    sensitive = debug_table[debug_table["Datastream ID (extracted)"] == "66666666-6666-6666-6666-666666666666"]
+    assert sensitive.iloc[0]["Property"] == "acme.com — Web"
+    assert sensitive.iloc[0]["Rule"] == "Sensitive Page — Route to Restricted Stream"
+    assert sensitive.iloc[0]["Environment"] == "development"
+    assert sensitive.iloc[0]["Sandbox"] == "dev (override)"
+    assert sensitive.iloc[0]["Resolved dataset name"] == "Web Events — Sensitive (Restricted)"
 
 
 def test_overview_refresh_everything_picks_up_a_datastream_map_edit(monkeypatch):

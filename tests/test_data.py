@@ -473,19 +473,27 @@ def test_fetch_rule_datastream_overrides_finds_the_one_mock_override():
     is the only mock rule component carrying a datastream override — every
     other mock rule (RL1, RL2, RL3) has no components at all, proving this
     only surfaces rules that actually override something, not every rule
-    on every property."""
+    on every property. Its override deliberately names its own sandbox
+    ("dev") — genuinely different from the "prod" sandbox passed in here
+    — to prove dataset resolution follows the override's *own* sandbox
+    field rather than whichever one is active. RC1 also carries a
+    "staging" override with `enabled: false` — asserting exactly one row
+    here (not two) proves that's correctly skipped end-to-end, not just
+    at the parser level (see test_parsers.py's own dedicated test)."""
     dc_rows = data.fetch_dc()
 
     overrides = data.fetch_rule_datastream_overrides(dc_rows, sandbox="prod")
 
-    assert len(overrides) == 1
+    assert len(overrides) == 1  # the disabled "staging" override contributes nothing
     row = overrides[0]
     assert row["rule_name"] == "Sensitive Page — Route to Restricted Stream"
     assert row["property"] == "acme.com — Web"
-    assert row["environment"] == "production"
+    assert row["environment"] == "development"
     assert row["datastream_id"] == "66666666-6666-6666-6666-666666666666"
     assert row["mapped"] is True
     assert row["dataset"] == "Web Events — Sensitive (Restricted)"
+    assert row["sandbox"] == "dev"
+    assert row["sandbox_from_override"] is True
     # This exact datastream has no extension config anywhere — before this
     # override is found, fetch_property_datastream_edges() alone puts it
     # in its own "(no property)" fallback, same symptom reported live.

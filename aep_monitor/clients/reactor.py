@@ -214,37 +214,54 @@ def parse_rule(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extract_rule_datastream_overrides(attrs: dict[str, Any]) -> dict[str, str]:
-    """{environment: datastream_id} for every environment override a single
-    rule *action*'s own datastream override actually carries, if any — the
-    Web SDK extension's "Send event" action carries its own optional
-    datastream override, separate from the extension's own default
-    `instances[]` settings _extract_datastream_ids() reads above. This is
-    what lets one rule route just the events matching it to a genuinely
-    different datastream than the property's default (e.g. a "Sensitive
-    page" rule overriding to a restricted datastream no extension config
-    ever names) — exactly the case _extract_datastream_ids() can't see,
-    since it only ever looks at extension-level settings.
+def _extract_rule_datastream_overrides(attrs: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """{environment: {"datastream_id": ..., "sandbox": ...}} for every
+    environment override a single rule *action*'s own datastream override
+    actually carries, if any — the Web SDK extension's "Send event" action
+    carries its own optional datastream override, separate from the
+    extension's own default `instances[]` settings
+    _extract_datastream_ids() reads above. This is what lets one rule
+    route just the events matching it to a genuinely different datastream
+    than the property's default (e.g. a "Sensitive page" rule overriding
+    to a restricted datastream no extension config ever names) — exactly
+    the case _extract_datastream_ids() can't see, since it only ever looks
+    at extension-level settings.
 
-    Reported live: the override itself is per-environment/sandbox, the
-    same shape as the extension's own `instances[]` config, not a single
-    flat value — confirmed by checking a live tenant (the earlier
-    single-value version of this function was wrong for exactly that
-    reason). Same key-checking shape as _extract_datastream_ids() above,
-    applied at the top level of the action's own settings rather than
-    nested under `instances[]` (a rule component has no per-environment
-    *instance* to nest under — one action fires in whichever environment
-    it's built into, but can still name a different override datastream
-    per environment/sandbox): `datastreamIdOverride`/`edgeConfigIdOverride`
-    (production), `stagingDatastreamIdOverride`/`stagingEdgeConfigIdOverride`
-    (staging), `developmentDatastreamIdOverride`/
-    `developmentEdgeConfigIdOverride` (development) — still not confirmed
-    against this exact key spelling on a live tenant (only that the
-    *shape* is per-environment, not the literal key names), so verify
-    against a real override's raw settings (Overview's rule-override
-    search shows the raw JSON for every component it checks) before
-    trusting extracted values, and correct the key list here the same way
-    _extract_datastream_ids() was."""
+    CONFIRMED live — a real tenant's raw `/rule_components` response for a
+    "Send event" component pulled its `settings` and it's exactly this
+    shape: a JSON-*encoded string* (parsed defensively below, same as
+    every other Reactor `settings` field in this file) containing an
+    `edgeConfigOverrides` object keyed by environment
+    (`development`/`staging`/`production`), each holding `enabled`
+    (boolean), `sandbox` (the AEP sandbox's own name — a literal field
+    right there in the override, not something this app has to infer
+    against whichever sandbox happens to be active in the sidebar, unlike
+    every other datastream lookup in this file, since Reactor's
+    *extension*-level config carries no such field at all), and
+    `datastreamId`. One environment's override is fully independent of
+    the others — production, staging, and development can each point at
+    a genuinely different sandbox *and* a genuinely different datastream,
+    not just a different datastream within one fixed sandbox.
+
+    `enabled` is honored: confirmed via the Launch UI's own help text
+    ("should resolve to true to enable overrides, and false to provide no
+    overrides") that `enabled: false` means the override is configured
+    but currently *inactive* — a real "Sensitive" datastream override
+    that's been disabled must not be reported as live. Only a literal
+    `False` skips an environment; anything else (`True`, missing, or a
+    data-element expression string like `"%someVar%"`, which resolves
+    dynamically at runtime and can't be evaluated here) is treated as
+    active, on the theory that a false positive (shown as connected when
+    it's actually dynamically disabled) is far less costly here than a
+    false negative (hiding a genuinely live override).
+
+    A flat, non-nested fallback (the same key names
+    _extract_datastream_ids() checks for the extension's own default
+    config: `datastreamIdOverride`/`edgeConfigIdOverride` etc., sandbox
+    left blank) is kept below in case some other rule action reuses that
+    shape instead of `edgeConfigOverrides` — never seen live, same
+    "checked first as a hedge" treatment _extract_datastream_ids() itself
+    gives the newer `datastreamId`/`edgeConfigId` rename."""
     settings_raw = attrs.get("settings")
     if isinstance(settings_raw, str):
         try:
@@ -258,16 +275,37 @@ def _extract_rule_datastream_overrides(attrs: dict[str, Any]) -> dict[str, str]:
     if not isinstance(settings_obj, dict):
         return {}
 
-    result: dict[str, str] = {}
+    overrides_obj = settings_obj.get("edgeConfigOverrides")
+    if isinstance(overrides_obj, dict):
+        result: dict[str, dict[str, str]] = {}
+        for environment in ("development", "staging", "production"):
+            env_obj = overrides_obj.get(environment)
+            if not isinstance(env_obj, dict):
+                continue
+            if env_obj.get("enabled") is False:
+                continue  # configured but explicitly turned off — not live
+            datastream_id = env_obj.get("datastreamId") or env_obj.get("edgeConfigId")
+            if not datastream_id:
+                continue
+            sandbox_name = env_obj.get("sandbox") or env_obj.get("sandboxName") or ""
+            result[environment] = {"datastream_id": str(datastream_id), "sandbox": str(sandbox_name)}
+        if result:
+            return result
+
+    # Fallback: maybe this rule-level override reuses the same flat,
+    # non-nested key names the extension's own default config settled on
+    # (_extract_datastream_ids()) rather than a dedicated
+    # edgeConfigOverrides object — no sandbox field to read in that shape.
+    result = {}
     production_id = settings_obj.get("datastreamIdOverride") or settings_obj.get("edgeConfigIdOverride")
     if production_id:
-        result["production"] = str(production_id)
+        result["production"] = {"datastream_id": str(production_id), "sandbox": ""}
     staging_id = settings_obj.get("stagingDatastreamIdOverride") or settings_obj.get("stagingEdgeConfigIdOverride")
     if staging_id:
-        result["staging"] = str(staging_id)
+        result["staging"] = {"datastream_id": str(staging_id), "sandbox": ""}
     development_id = settings_obj.get("developmentDatastreamIdOverride") or settings_obj.get("developmentEdgeConfigIdOverride")
     if development_id:
-        result["development"] = str(development_id)
+        result["development"] = {"datastream_id": str(development_id), "sandbox": ""}
     return result
 
 

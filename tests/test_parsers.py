@@ -154,29 +154,92 @@ def test_parse_extension_does_not_crash_on_malformed_settings():
     assert reactor.parse_extension({"id": "e1", "attributes": {"settings": "[1,2,3]"}})["datastream_ids"] == {}
 
 
-def test_parse_rule_component_extracts_a_production_datastream_override():
+def test_parse_rule_component_extracts_an_edge_config_override_with_its_own_sandbox():
+    """CONFIRMED against a real tenant's raw /rule_components response
+    (both the delegate id and this exact settings shape): the Web SDK
+    "Send event" action's "Datastream Configuration Overrides" carries
+    one independently-configured object per environment, each with its
+    own `sandbox` *and* `datastreamId` — so the override's sandbox is
+    read straight off the override itself, not inferred."""
     comp = reactor.parse_rule_component(
-        {"id": "rc1", "attributes": {"name": "Send event", "delegate_descriptor_id": "adobe-alloy::actions::send-event", "settings": '{"datastreamIdOverride": "override-123"}'}},
+        {"id": "rc1", "attributes": {"name": "Send event", "delegate_descriptor_id": "adobe-alloy::actions::send-event", "settings": json.dumps({
+            "edgeConfigOverrides": {"production": {"datastreamId": "override-123", "sandbox": "prod-sandbox"}},
+        })}},
         rule_id="r1", rule_name="Sensitive Page Rule",
     )
-    assert comp["datastream_overrides"] == {"production": "override-123"}
+    assert comp["datastream_overrides"] == {"production": {"datastream_id": "override-123", "sandbox": "prod-sandbox"}}
     assert comp["rule_id"] == "r1"
     assert comp["rule_name"] == "Sensitive Page Rule"
 
 
-def test_parse_rule_component_extracts_staging_and_development_overrides_too():
+def test_parse_rule_component_extracts_staging_and_development_edge_config_overrides_too():
     """Reported live: the override is per-environment/sandbox, the same
     shape as the extension's own instances[] config — not a single flat
     value — so all three must survive independently, same as
-    _extract_datastream_ids()'s own per-environment behavior."""
+    _extract_datastream_ids()'s own per-environment behavior. Each
+    environment can genuinely point at a different sandbox too, not just
+    a different datastream within the same one."""
     comp = reactor.parse_rule_component(
         {"id": "rc1", "attributes": {"settings": json.dumps({
-            "datastreamIdOverride": "prod-override", "stagingDatastreamIdOverride": "staging-override",
-            "developmentDatastreamIdOverride": "dev-override",
+            "edgeConfigOverrides": {
+                "production": {"datastreamId": "prod-override", "sandbox": "prod-sandbox"},
+                "staging": {"datastreamId": "staging-override", "sandbox": "qa-sandbox"},
+                "development": {"datastreamId": "dev-override", "sandbox": "dev-sandbox"},
+            },
         })}},
         rule_id="r1", rule_name="Some Rule",
     )
-    assert comp["datastream_overrides"] == {"production": "prod-override", "staging": "staging-override", "development": "dev-override"}
+    assert comp["datastream_overrides"] == {
+        "production": {"datastream_id": "prod-override", "sandbox": "prod-sandbox"},
+        "staging": {"datastream_id": "staging-override", "sandbox": "qa-sandbox"},
+        "development": {"datastream_id": "dev-override", "sandbox": "dev-sandbox"},
+    }
+
+
+def test_parse_rule_component_falls_back_to_flat_keys_with_no_edge_config_overrides_object():
+    """Not confirmed live — a hedge kept in case some other rule action
+    doesn't reuse the confirmed edgeConfigOverrides shape and instead
+    carries the extension's own flat, non-nested key names
+    (_extract_datastream_ids()). No sandbox to read in that shape, so it
+    comes back blank rather than guessed."""
+    comp = reactor.parse_rule_component(
+        {"id": "rc1", "attributes": {"settings": '{"datastreamIdOverride": "override-123"}'}},
+        rule_id="r1", rule_name="Some Rule",
+    )
+    assert comp["datastream_overrides"] == {"production": {"datastream_id": "override-123", "sandbox": ""}}
+
+
+def test_parse_rule_component_skips_an_environment_explicitly_disabled():
+    """CONFIRMED live via the Launch UI's own help text ("should resolve
+    to true to enable overrides, and false to provide no overrides"):
+    `enabled: false` means an environment's override is configured but
+    not actually active — must not be reported as a live connection, or
+    a disabled override would show as a false positive in the diagram."""
+    comp = reactor.parse_rule_component(
+        {"id": "rc1", "attributes": {"settings": json.dumps({
+            "edgeConfigOverrides": {
+                "production": {"enabled": False, "sandbox": "prod-sandbox", "datastreamId": "prod-override"},
+                "staging": {"enabled": True, "sandbox": "qa-sandbox", "datastreamId": "staging-override"},
+            },
+        })}},
+        rule_id="r1", rule_name="Some Rule",
+    )
+    assert comp["datastream_overrides"] == {"staging": {"datastream_id": "staging-override", "sandbox": "qa-sandbox"}}
+
+
+def test_parse_rule_component_treats_a_dynamic_enabled_value_as_active():
+    """`enabled` can also be a data-element expression string (resolved
+    dynamically at runtime, e.g. "%someVar%") rather than a literal
+    boolean — can't be evaluated statically here, so it's treated as
+    active rather than silently dropped: a false positive is far less
+    costly than hiding a genuinely live override."""
+    comp = reactor.parse_rule_component(
+        {"id": "rc1", "attributes": {"settings": json.dumps({
+            "edgeConfigOverrides": {"production": {"enabled": "%someDataElement%", "sandbox": "prod-sandbox", "datastreamId": "prod-override"}},
+        })}},
+        rule_id="r1", rule_name="Some Rule",
+    )
+    assert comp["datastream_overrides"] == {"production": {"datastream_id": "prod-override", "sandbox": "prod-sandbox"}}
 
 
 def test_parse_rule_component_datastream_overrides_is_empty_for_a_component_with_no_override():

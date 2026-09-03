@@ -466,14 +466,15 @@ def fetch_property_datastream_edges(dc_rows: list[dict[str, Any]], sandbox: str 
 
 def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str | None = None) -> list[dict[str, Any]]:
     """{property, domains, environment, datastream_id, datastream, dataset,
-    mapped, mapped_dataset_id, rule_id, rule_name} rows — same shape
-    fetch_property_datastream_edges() produces plus one extra field
-    (`rule_name`, read by ui/overview.py to draw a Property → Rule →
-    Datastream chain instead of a direct Property → Datastream edge), but
-    closing a *different* gap: one rule's own action can override a
-    property's default Web SDK datastream for just the events matching
-    that rule (Adobe's "Send event" action — see reactor.py's
-    _extract_rule_datastream_overrides()), which
+    mapped, mapped_dataset_id, rule_id, rule_name, sandbox,
+    sandbox_from_override} rows — same shape fetch_property_datastream_
+    edges() produces plus two extra fields (`rule_name`, read by
+    ui/overview.py to draw a Property → Rule → Datastream chain instead
+    of a direct Property → Datastream edge), but closing a *different*
+    gap: one rule's own action can override a property's default Web SDK
+    datastream for just the events matching that rule (Adobe's "Send
+    event" action, its "Datastream Configuration Overrides" — see
+    reactor.py's _extract_rule_datastream_overrides()), which
     fetch_property_datastream_edges() can never see since it only ever
     reads the extension's own default `instances[]` settings. Reported
     live as the actual symptom this closes: a datastream used *only*
@@ -483,40 +484,53 @@ def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str 
     despite genuinely belonging to a property, just reachable through one
     specific rule rather than the property's own default config.
 
-    Deliberately NOT part of fetch_dc()/refresh_all() — walking every
-    rule's own /rule_components is a real N (property) × M (rule) amount
-    of extra Reactor calls on top of the six-leg walk those already do,
-    for a fact that's rare by construction (most rules carry no
-    datastream override at all). Meant to be called on demand only (see
-    Overview's "Search rules for datastream overrides" button), against
-    `dc_rows` already sitting in session state — no extra property/rule
-    fetch of its own, just the one additional hop each rule those
-    properties already carry gets walked once. A rule component with no
-    override contributes nothing to the result at all — this never
-    surfaces "every rule on every property," only the ones that actually
-    do the thing being searched for.
+    Called automatically alongside fetch_property_datastream_edges()
+    every time the lineage chart is (re)built (ui/overview.py's
+    _do_refresh_lineage()) — not a separate on-demand search. This is a
+    real N (property) × M (rule) amount of extra Reactor calls on top of
+    the six-leg walk fetch_dc() already does, on every sandbox change and
+    every "Refresh everything" click; accepted deliberately (on request)
+    so a rule-based override always shows up in the end-to-end flow
+    without a separate action, even though most rules carry no override
+    at all and the walk finds nothing for them. A rule component with no
+    override contributes nothing to the result — this never surfaces
+    "every rule on every property," only the ones that actually override
+    something.
 
-    Reported live: the override is per-environment/sandbox, the same
-    shape as the extension's own default `instances[]` config — one row
-    per (rule, environment) pair, exactly mirroring how
-    fetch_property_datastream_edges() itself handles a property's default
-    datastream carrying a genuinely different id per environment. A rule
-    with overrides in more than one environment gets one row per
-    environment, not collapsed into one.
+    One row per (rule, environment) pair — confirmed against a real
+    tenant's Launch UI: the override is genuinely per-environment/sandbox
+    (Development/Staging/Production each independently configured), not
+    one flat value, exactly mirroring how fetch_property_datastream_
+    edges() itself handles a property's default datastream carrying a
+    different id per environment.
 
-    Dataset resolution is against whichever `sandbox` is passed in only —
-    same single-sandbox scoping fetch_property_datastream_edges() already
-    has, and the same known gap: a rule component's *environment*
-    (production/staging/development, a Launch/Reactor concept) is not the
-    same thing as an AEP *sandbox* — the override points at a datastream,
-    and sandbox is a property of that datastream, not exposed anywhere in
-    Reactor's rule/rule_component payload. So an override pointing at a
-    datastream provisioned in a different sandbox than the one currently
-    active resolves as unmapped/unresolved here rather than guessed at.
-    Switching the sidebar sandbox and re-running the search is the
-    intended fix, same as every other single-sandbox gap in this file."""
+    Dataset resolution now uses each override's own **explicit** sandbox
+    field when one was extracted (`sandbox_from_override=True`) — a
+    literal fact read straight off the override, confirmed to exist in
+    Adobe's own UI (each environment tab has its own "Sandbox" picker
+    alongside its own "Datastream" picker) — rather than assuming
+    whichever sandbox happens to be active in the sidebar. This is a real
+    improvement over fetch_property_datastream_edges()'s own single-
+    sandbox gap (that function's extension-level source has no such field
+    to read at all): an override naming its own sandbox resolves
+    correctly regardless of which sandbox is currently selected. Only
+    when an override's sandbox couldn't be extracted
+    (`sandbox_from_override=False` — either the fallback flat-key parse
+    path, which carries no sandbox at all, or a genuinely blank field)
+    does this fall back to whichever `sandbox` was passed in, the same
+    inference-based gap every other lookup in this file has."""
     datastream_map = load_datastream_map()
-    dataset_names = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sandbox)}
+    # One fetch_datasets() call per *distinct* sandbox actually named by
+    # an override (typically small — often just one or two), not one per
+    # row; cached here rather than in fetch_datasets() itself since this
+    # is the only caller that ever needs more than the single active
+    # sandbox in one pass.
+    dataset_names_by_sandbox: dict[str, dict[str, str]] = {}
+
+    def _dataset_names_for(sb: str) -> dict[str, str]:
+        if sb not in dataset_names_by_sandbox:
+            dataset_names_by_sandbox[sb] = {d["dataset_id"]: d["name"] for d in fetch_datasets(sandbox=sb)}
+        return dataset_names_by_sandbox[sb]
 
     if settings.mock_mode:
         raw_triples = [
@@ -540,13 +554,18 @@ def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str 
     rows: list[dict[str, Any]] = []
     for prop, rule, comp in raw_triples:
         parsed = reactor_api.parse_rule_component(comp, rule["rule_id"], rule["name"])
-        for environment, datastream_id in parsed["datastream_overrides"].items():
+        for environment, override in parsed["datastream_overrides"].items():
+            datastream_id = override["datastream_id"]
+            sandbox_from_override = bool(override["sandbox"])
+            effective_sandbox = override["sandbox"] or (sandbox or "")
             mapped_entry = datastream_map.get(datastream_id)
             mapped_dataset_id = mapped_entry["dataset_id"] if mapped_entry else ""
             label_suffix = f"via rule: {rule['name']} ({environment})"
             if mapped_entry:
                 datastream_label = f"{mapped_entry['name'] or datastream_id} ({label_suffix})"
-                dataset_label = dataset_names.get(mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "")
+                dataset_label = _dataset_names_for(effective_sandbox).get(
+                    mapped_dataset_id, f"{mapped_dataset_id} (unresolved)" if mapped_dataset_id else "",
+                )
             else:
                 datastream_label = f"{datastream_id} (unmapped, {label_suffix})"
                 dataset_label = ""
@@ -555,6 +574,7 @@ def fetch_rule_datastream_overrides(dc_rows: list[dict[str, Any]], sandbox: str 
                 "environment": environment, "datastream_id": datastream_id,
                 "datastream": datastream_label, "dataset": dataset_label, "mapped": mapped_entry is not None,
                 "mapped_dataset_id": mapped_dataset_id, "rule_id": rule["rule_id"], "rule_name": rule["name"],
+                "sandbox": effective_sandbox, "sandbox_from_override": sandbox_from_override,
             })
     return rows
 

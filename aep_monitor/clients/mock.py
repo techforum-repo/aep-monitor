@@ -7,6 +7,7 @@ Swapping MOCK_MODE=false changes nothing else in the app.
 """
 
 import copy
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -226,14 +227,37 @@ MOCK_RULE_COMPONENTS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "RC1",
             "attributes": {
-                "name": "Send event — override to restricted datastream",
-                # Guessed at Adobe's own naming convention for the Web
-                # SDK's "Send event" action delegate id (mirrors the
-                # confirmed extension package name "adobe-alloy" — see
-                # parse_extension()) — not confirmed live, same caveat as
-                # _extract_rule_datastream_override()'s settings-key list.
+                "name": "Adobe Experience Platform Web SDK - Send event",
+                # Confirmed live against a real tenant's raw
+                # /rule_components response — both this exact delegate id
+                # and the settings shape below.
                 "delegate_descriptor_id": "adobe-alloy::actions::send-event",
-                "settings": "{\"datastreamIdOverride\":\"66666666-6666-6666-6666-666666666666\"}",
+                # Nested edgeConfigOverrides shape, one entry per Launch
+                # environment — confirmed live via a real tenant's raw
+                # settings (development/staging/production, each its own
+                # enabled/sandbox/datastreamId). Only "development" is
+                # populated here — the override's own sandbox ("dev")
+                # deliberately differs from this test suite's usual active
+                # sandbox ("prod") to demonstrate
+                # data.fetch_rule_datastream_overrides() resolving against
+                # the override's *own* sandbox field rather than whichever
+                # one happens to be active. "staging" is present too but
+                # `enabled: false` — confirmed live that this means
+                # "configured but not live," not a second real override —
+                # proving it's skipped rather than surfaced as a false
+                # positive.
+                "settings": json.dumps({
+                    "edgeConfigOverrides": {
+                        "development": {
+                            "enabled": True, "sandbox": "dev",
+                            "datastreamId": "66666666-6666-6666-6666-666666666666",
+                        },
+                        "staging": {
+                            "enabled": False, "sandbox": "staging",
+                            "datastreamId": "77777777-7777-7777-7777-777777777777",
+                        },
+                    },
+                }),
             },
         },
     ],
